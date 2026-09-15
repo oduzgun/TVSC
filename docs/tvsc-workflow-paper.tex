@@ -1,0 +1,1051 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,array,hyperref}
+\setlength{\emergencystretch}{2em}
+\newcommand{\simplex}{\Delta_J}
+\title{Temporally Regularized Synthetic Control in R:\\
+A Chronological Workflow}
+\author{}
+\date{September 15, 2026}
+\begin{document}
+\maketitle
+\begin{abstract}
+This companion paper specifies a chronological workflow for a proposed R
+implementation of temporally regularized synthetic control. It separates
+panel preparation, predetermined predictor metrics, donor-weight fitting,
+chronological validation, counterfactual prediction and treatment-effect
+calculation. The planned interface separates panel preparation, optional
+chronological split construction, fitting and effect estimation, with a
+reusable prediction method. This initial design draft preserves the agreed
+software specification while the companion methodological paper is being
+settled. It does not report an implemented package, timing benchmarks or
+empirical results. Software development and validation will follow the
+methodological review; the California application will then be reported
+in the methodological paper.
+\end{abstract}
+
+\section{Purpose and scope}
+The companion methodological paper, \emph{Temporally Regularized Synthetic
+Control}, develops the estimators, conditional theory and proofs, and will
+report the empirical application. This paper has a different purpose:
+to document the data interfaces, information restrictions, numerical
+implementation and reproducible workflow that realize those estimators.
+Neither paper should be read as evidence that the proposed software has
+already been implemented or that counterfactual accuracy has been verified.
+
+The development sequence is to settle the methodological specification,
+then implement and validate the software described here, then use those
+functions to complete the empirical comparison in the methodological
+paper. The following material is a retained design specification, not a
+parallel implementation task. Package naming, dependencies, empirical
+predictor-weight calibration and numerical acceptance settings remain to
+be settled before release. The brief mathematical summary makes the
+workflow self-contained; the proofs remain in the methodological paper.
+
+\section{Estimator interface}\label{sec:framework}
+Consider one target and $J\geq2$ eligible donors observed at $T\geq3$
+equally spaced pre-treatment dates. Let $X_{1,t}\in\mathbb R^K$ and
+$X_{0,t}\in\mathbb R^{K\times J}$ be aligned predictor blocks, with
+common predictor definitions and donor ordering. The researcher supplies
+$V_t=\operatorname{diag}(v_{1,t},\ldots,v_{K,t})$, where $v_{k,t}\geq0$
+and $\sum_kv_{k,t}=1$, before donor fitting. Uniform, empirical constant
+and empirical time-varying metrics are distinct input modes, not variables
+jointly optimized with donor weights.
+
+Write $\simplex=\{w\in\mathbb R^J:w\geq0,\mathbf1^\top w=1\}$,
+$W=(w_1,\ldots,w_T)\in\mathcal C=\simplex^T$, and
+$\theta=\operatorname{col}_t(w_t)$. Define
+$\Delta w_t=w_t-w_{t-1}$ and
+$\Delta^2w_t=w_t-2w_{t-1}+w_{t-2}$. For $q\in\{1,2\}$,
+\[
+ A_{\mathcal V}(W)=T^{-1}\sum_{t=1}^T
+       \|X_{1,t}-X_{0,t}w_t\|_{V_t}^2,\qquad
+ C_q(W)=(T-q)^{-1}\sum_{t=q+1}^T\|\Delta^q w_t\|_2^2.
+\]
+The fitted path minimizes
+\[
+ F_{q,\lambda,\mathcal V}(W)=(1-\lambda)A_{\mathcal V}(W)
+                      +\lambda C_q(W),\qquad 0\leq\lambda<1.
+\]
+Among primary minimizers, select the one of smallest squared Euclidean
+norm. This secondary selection is not an additional ridge term.
+The additive coefficient is $\alpha=\lambda/(1-\lambda)$;
+$\lambda=1$ is excluded because it discards matching entirely.
+
+For the numerical formulation below, define
+\[
+ \mathcal A\theta=\operatorname{col}_t
+       (T^{-1/2}V_t^{1/2}X_{0,t}w_t),\qquad
+ b=\operatorname{col}_t(T^{-1/2}V_t^{1/2}X_{1,t}),
+\]
+\[
+ \mathcal D_q\theta=(T-q)^{-1/2}
+       \operatorname{col}_{t=q+1}^T(\Delta^q w_t).
+\]
+Let $\widehat a=\widehat w_T$ and
+$\widehat d=\widehat w_T-\widehat w_{T-1}$ for an accepted fitted path.
+For either penalty order, define endpoint retention (E) and projected
+increment continuation (D) by
+\begin{equation}\label{eq:continuation}
+ \widehat w^E_{T+h}=\widehat a,\qquad
+ \widehat w^D_{T+h}=\Pi_{\simplex}(\widehat a+h\widehat d),
+ \quad h=1,\ldots,H,
+\end{equation}
+where $\Pi_{\simplex}$ is Euclidean projection. E retains the final
+composition rather than returning to a separately fitted static vector.
+D continues the final increment and enforces feasibility at each horizon.
+Projected increment continuation is the package default for both orders
+and the continuation rule in the primary empirical comparison. Endpoint
+retention remains an optional within-fit diagnostic.
+D uses the original endpoint and increment, not recursively projected
+updates.\footnote{Pointwise projection of an affine candidate is not in
+general the solution to a joint minimum-curvature problem over the entire
+future path. We specify it as a continuation rule, not as an automatic
+consequence of the training optimization.}
+
+
+Here $x_{T+h}$ denotes aligned contemporaneous donor outcomes in original
+units, and the untreated prediction is
+$\widehat Y^R_{1,T+h}(0)=x_{T+h}^\top\widehat w^R_{T+h}$ for
+$R\in\{E,D\}$. The observed treated target outcome is
+$Y^{\rm obs}_{1,T+h}$; $\tau_{T+h}=Y_{1,T+h}(1)-Y_{1,T+h}(0)$ is its
+unobserved causal effect. In validation windows $y_t$ denotes the observed
+untreated target outcome. Prediction does not require future target
+predictors or target outcomes.
+
+\section{Estimation Strategy}\label{sec:estimation}
+This section gives the chronological workflow for the proposed R package.
+The revised calibration and interface decisions below were agreed on
+September 15, 2026. A first scoped refactor now integrates version-2 raw
+blocks into preparation and updates split-input compatibility, with revised
+preparation and split fixtures. The user-supplied September 15, 2026 R
+console transcript shows both revised suites passing, including explicit
+source loading and an isolated-environment preparation check. Session
+information and source revision identifiers were not supplied, and the
+transcript does not establish a clean-start session. Independent local
+reproduction remains pending because R is unavailable in this workspace.
+The separate \texttt{tvsc.vmetrics()} source draft now implements the
+approved scaling and calibration contract. A subsequent user-supplied
+excerpt shows its final isolated-loading check and suite success message;
+the full fixture log and independent reproduction remain pending.
+Fitting, prediction and effect operations remain unimplemented.
+Earlier test reports describe the preceding interface.
+
+\subsection{Revised interface and calibration design}\label{sec:revised-design}
+The public preparation operation will combine panel validation with raw
+block construction. The researcher declares target and donor identities;
+\texttt{tvsc.dataprep()} validates them and arranges the corresponding
+unscaled predictor and outcome arrays. Block construction may remain an
+internal helper. Preparation does not learn scales or predictor relevance.
+Post-treatment outcomes remain separate from all fitting inputs.
+
+\paragraph{Approved preparation interface.}
+Retain the existing argument names and the default regular step:
+\begin{verbatim}
+tvsc.dataprep(data, unit, time, outcome, treated, donors,
+              intervention_time, pre_period, predictors,
+              period_step = 1)
+\end{verbatim}
+The explicit \texttt{predictors} argument lists exactly the matching
+features; the outcome is not added silently. For example, with
+\texttt{outcome = "sales"}, \texttt{predictors = "sales"} prepares the
+approved outcome-only specification, whereas
+\texttt{predictors = c("sales", "income")} includes both features.
+The intervention index denotes the first treated period, and
+\texttt{pre\_period} explicitly lists regularly spaced training dates.
+Retain supplied donor and predictor ordering and the existing training
+validation rules.
+
+Retain the \texttt{tvsc\_prepared} class and its top-level
+\texttt{schema\_version}, \texttt{schema}, \texttt{training},
+\texttt{future\_donors}, \texttt{future\_target}, \texttt{recipe} and
+\texttt{diagnostics} components, adding \texttt{blocks}. This component
+contains the unscaled \texttt{X1}, \texttt{X0}, \texttt{Y1} and
+\texttt{Y0} arrays for the full designated pre-period, with dates and
+dimensions. Preserve the existing block layout: date-indexed target
+feature vectors and predictor-by-donor matrices, a target outcome vector,
+and a date-by-donor outcome matrix. Keep the ordered raw training table
+so subsequent operations can obtain prefixes and reconstruct preprocessing
+rather than slice full-period scaled data. The recipe records
+contemporaneous features and unapplied scaling; diagnostics retain
+validation results and constant-feature flags without deleting features.
+Available future outcomes remain separate, and future target outcomes
+are optional. Preparation performs no scaling, calibration, splitting,
+donor fitting or effect calculation. A separate public
+\texttt{tvsc.blocks()} call is no longer required in the revised workflow.
+These arguments and output responsibilities are now reflected in the
+preparation source draft, with a user-run pass of its revised fixtures.
+Independent reproduction and broader integration validation remain pending.
+The versioning rule follows.
+
+\paragraph{Approved object versions and compatibility.}
+Version each object type separately. Revised \texttt{tvsc\_prepared}
+objects, raw and scaled block objects, and scaling metadata use
+\texttt{schema\_version = 2L}. The new \texttt{tvsc\_vmetrics} class
+starts at \texttt{1L}. Split objects retain class \texttt{tvsc\_splits}
+and version \texttt{1L}, because their date-based output structure does
+not change. These numbers identify object contracts, not package releases
+or evidence of validation.
+
+Revised preparation produces version-2 objects. Metric construction
+requires revised preparation and does not silently upgrade old objects.
+Update the split constructor to accept revised preparation while keeping
+its split-output format. Reject incompatible preparation objects with a
+clear instruction to rerun preparation from the original panel; manually
+changing a version field is not migration. Check required fields,
+dimensions, ordering and relevant metadata in addition to class and
+version. A version number alone does not establish object validity.
+
+The first implementation step is limited to integrating raw block
+construction into preparation, updating split-input compatibility, and
+updating preparation and split tests. Metric construction follows as a
+separate implementation step; the donor solver is outside this refactor.
+Preparation now emits version-2 raw blocks and the split constructor
+accepts version-2 preparation while retaining version-1 split output.
+Their revised fixtures pass in the supplied user-run transcript; independent
+reproduction remains pending. Version-2 scaling and
+the new metric object are now constructed by the separate
+\texttt{tvsc.vmetrics()} source draft, with a user-reported pass supported
+by the final test excerpt. The old standalone block,
+scaling, metric and problem drafts still expect version-1 inputs and are
+not compatible with revised preparation; they are not silently migrated.
+
+\paragraph{Metric construction and fitting responsibilities.}
+The agreed name \texttt{tvsc.vmetrics()} denotes the revised operation
+that combines scaling and predictor-metric construction for one specified
+training sample. It returns both transformed blocks and their metrics,
+with transformation parameters, calibration outputs and diagnostics.
+Scaling is applied once, including when uniform metrics are requested.
+The same transformed features are used for relevance calibration and
+subsequent donor fitting; the calibration routine must not silently
+standardize them again. The new source implements this replacement
+separately; it does not rename or migrate the legacy \texttt{tvsc.metrics()}
+interface.
+
+\paragraph{Scoped metric-construction implementation.}
+The source \texttt{R/tvsc.vmetrics.R} requires only the revised preparation
+source, not the split constructor or legacy block/scaling functions.
+It reconstructs a prefix of at least three dates from the raw training
+table and checks agreement with its stored raw blocks. Full designated
+schema metadata are retained, while periods, cutoff, arrays and learned
+parameters describe only that prefix. Later measurement values and future
+outcomes do not enter this operation. Internal helpers perform donor-only
+scaling and SVD-based OLS; failures carry a stage and available diagnostics
+in a \texttt{tvsc\_vmetrics\_error} condition. Named fallback records identify
+the predictors and dates using divisor 1. The fixtures in
+\texttt{tests/test-tvsc.vmetrics.R} cover known slopes and intercepts,
+agreement with \texttt{lm.fit()}, both conversions, final-date metric
+retention, donor-only and prefix isolation, supplied weights, numerical
+failures and isolated source loading. On September 15, 2026 the user
+supplied the suite ending: preparation and metric construction are sourced
+into an environment with \texttt{baseenv()} as parent, and the displayed
+assertion confirms agreement of constant-mode output with the existing
+\texttt{scaled\_constant} reference, without local split or standalone
+scaling bindings. The assertion completes without a displayed error and
+is followed by the suite success message. This supports a user-reported
+pass but does not establish execution of earlier assertions or creation
+of the reference object in this run. The full log, session information,
+source identifiers, clean-start evidence and independent reproduction
+remain outstanding. The donor solver is unchanged.
+
+\paragraph{Approved metric-construction interface.}
+The approved core call is
+\begin{verbatim}
+tvsc.vmetrics(prepared, cutoff, predictor_weights = "uniform",
+              scaling = "sd", conversion = "absolute",
+              scales = NULL, provenance = NULL, rank_tol = NULL,
+              weight_sum_tol = 1e-8)
+\end{verbatim}
+The mandatory \texttt{cutoff} is an actual date in the designated
+pre-period, not a row number. Use only the training prefix ending there;
+the final fit supplies the last pre-treatment date, and validation supplies
+each fold's cutoff. No split object enters this operation.
+The three character inputs for \texttt{predictor\_weights} are exactly
+\texttt{"uniform"}, \texttt{"constant"} and \texttt{"varying"}.
+They request equal feature weights, donor-only OLS with common slopes and
+date intercepts, and date-by-date donor OLS with final-date metric
+retention, respectively. The longer empirical-prefixed strings are not
+part of the approved interface.
+
+Alternatively, \texttt{predictor\_weights} accepts a named numeric vector
+of supplied constant weights or a named predictor-by-date matrix of
+supplied weights. Names must cover the selected features and, for a
+matrix, exactly the prefix dates. Supplied weights refer to the selected
+scaled feature coordinates; do not silently normalize them or slice extra
+dates. The \texttt{conversion} choices are \texttt{"absolute"} and
+\texttt{"squared"}, used only for empirical calibration and recorded as
+not applicable otherwise. The \texttt{scales} input is required for
+\texttt{scaling = "custom"} and must be \texttt{NULL} otherwise.
+Outcome-only preparation uses \texttt{"uniform"}, returns $V_t=[1]$ and
+records calibration bypass by design. Explicit \texttt{"constant"} or
+\texttt{"varying"} requests for outcome-only inputs are rejected rather
+than silently ignored.
+
+Return an object of class \texttt{tvsc\_vmetrics} with
+\texttt{schema\_version} and \texttt{schema} for feature definitions and
+ordered unit identities, and \texttt{periods} and \texttt{cutoff} for the
+actual training prefix. Its \texttt{blocks} contain transformed
+\texttt{X1} and \texttt{X0} with unchanged training \texttt{Y1} and
+\texttt{Y0}; its \texttt{weights} are a named $K\times T_c$ matrix whose
+columns define $V_t$. The \texttt{scaling} component records the method,
+centers, divisors, reference donors and fallback records. The
+\texttt{calibration} component records mode, coefficients and intercepts,
+calibration dates, conversion and boundary convention, or the reason
+calibration was not performed. Retain \texttt{diagnostics} and
+\texttt{provenance}; declared sources of external inputs do not certify
+absence of leakage. The object contains no fitted donor weights, selected
+penalty or validation scores and can be reused across penalty values and
+both penalty orders for the same prefix and configuration. This core
+interface is now reflected in the source draft. The rank and supplied-weight
+sum controls are specified below, with object versions specified above.
+
+\paragraph{Approved supplied-weight sum check.}
+The default \texttt{weight\_sum\_tol = 1e-8} is an absolute tolerance.
+For each supplied weight column require finite nonnegative entries, a
+positive finite computed sum, and
+\[
+ \left|\sum_{k=1}^K v_{k,t}-1\right|
+ \leq \texttt{weight\_sum\_tol}.
+\]
+Every column must pass; otherwise reject the supplied input. Even small
+negative entries are rejected rather than clipped. Accepted values remain
+unchanged, with no automatic renormalization. An override must be a finite
+numeric scalar in $[0,1)$; zero requests exact equality of the computed
+sum to one. Record the tolerance, column sums and maximum absolute
+deviation from one in diagnostics. This is numerical acceptance, not
+exact mathematical normalization: accepted supplied columns can differ
+slightly from a sum of one. It is distinct from the intentional
+normalization of OLS slopes when constructing empirical weights.
+The source implements this check; R validation remains pending.
+
+\paragraph{Approved numerical OLS rank check.}
+For \texttt{"constant"}, subtract each calibration date's donor feature
+means and stack the resulting donor rows across calibration dates. For
+\texttt{"varying"}, form this centered donor design separately at each
+calibration date. Write the resulting matrix as $B\in\mathbb R^{n\times K}$.
+Centering accounts for the agreed date intercepts; it does not change the
+matching blocks or introduce another feature standardization. Do not
+rescale the design columns silently for this check.
+
+Let $\sigma_r(B)$ be its singular values and let $\epsilon_{\rm machine}$
+denote machine precision. The default \texttt{rank\_tol = NULL} selects
+the relative tolerance $\rho=\max(n,K)\epsilon_{\rm machine}$. An override
+must be a finite numeric scalar strictly between zero and one and replaces
+$\rho$. Define
+\[
+ \eta=\rho\,\sigma_{\max}(B),\qquad
+ r_{\rm num}=\#\{r:\sigma_r(B)>\eta\}.
+\]
+Require $r_{\rm num}=K$ for each required design; an all-zero design
+has numerical rank zero and fails. Rejection causes explicit calibration
+failure, not predictor deletion, reduced-rank coefficients, ridge or
+uniform weights. Record the requested and actual tolerance, threshold,
+singular values, numerical and required ranks, calibration dates and a
+condition-number diagnostic. No additional condition-number rejection
+threshold is introduced. Declare overrides before validation; do not
+adjust them automatically until a failing fold passes. Passing this
+roundoff-based check does not guarantee stable or substantively meaningful
+predictor weights and can admit nearly dependent designs. This numerical
+admissibility convention is not certification of exact mathematical rank.
+The source implements this check; R validation remains pending.
+
+\paragraph{Fitting orchestration.}
+\texttt{tvsc.fit()} will construct chronological splits from explicit
+window settings or accept a separately constructed \texttt{tvsc.split()}
+object. The split helper remains available for inspection and reuse;
+split construction does not belong inside \texttt{tvsc.vmetrics()}.
+Within each fold, fitting obtains raw training-prefix blocks, reconstructs
+scaling and metrics, freezes those metrics, then fits donor weights and
+scores continuation predictions. Final fitting repeats these operations
+on the full designated pre-period. A fixed penalty needs no validation
+split. Integrating these calls does not introduce joint or alternating
+optimization of predictor and donor weights. Exact revised fitting
+arguments and return schemas remain to be specified.
+
+\paragraph{Donor-only scaling and future-outcome calibration.}
+Across uniform, empirical constant, empirical time-varying, supplied-weight
+and outcome-only specifications, learned scaling parameters use donors
+only within the actual training prefix. Apply the same transformation to
+donors and target. No target-inclusive reference option is planned for
+the first version. This common preprocessing rule separates the scaling
+reference from predictor-weighting choices; it is not a claim of superior
+counterfactual accuracy. The four scaling
+methods remain \texttt{sd}, \texttt{zscore}, \texttt{none} and
+\texttt{custom}, with \texttt{sd} the default. For learned within-date
+sample variances the reference population changes from $J+1$ units to
+$J$ donors, with denominator $J-1$. The \texttt{sd} method retains its
+RMS within-date SD definition without centering; \texttt{zscore} retains
+date-specific donor centers and scales. The \texttt{none} method leaves
+features unchanged and estimates no reference parameters; \texttt{custom}
+applies supplied positive scales identically to donors and target without
+estimating them. Reconstruct learned preprocessing separately within each
+validation training prefix and for the final full-pre-period fit.
+Reporting outcomes are unchanged.
+The legacy standalone scaling source still uses target plus donors; the
+new internal scaling helper uses donors only and awaits R validation.
+In particular, equal donor values do not imply a
+zero target--donor contrast; a zero-scale rule must not erase that gap.
+
+\paragraph{Approved zero-scale convention.}
+Use divisor 1 for genuine zero donor variation and record a visible
+diagnostic identifying the affected features and dates. For \texttt{sd},
+this fallback applies only when the feature is constant across donors at
+every training date; the common donor value may differ across dates.
+A zero-variation date alone does not trigger fallback when the common RMS
+scale is positive. No centering is introduced. For \texttt{zscore}, apply
+the rule separately to each feature/date, retaining its donor center and
+using divisor 1. Apply the same transformation to target and donors:
+equal donor values must not force a different target value to zero.
+Affected matching gaps remain in original feature units, not unit-variance
+units. The \texttt{none} method remains unchanged; \texttt{custom} requires
+strictly positive finite supplied scales and rejects zero rather than
+replacing it.
+
+The fallback requires actual donor equality, not a small computed SD.
+Unequal donor values producing a zero or nonfinite scale are a numerical
+failure, not a reason to apply divisor 1. Do not silently floor small
+positive scales; nonfinite transformed values also cause explicit failure.
+Successful scaling does not waive OLS identification checks. A feature
+constant across donors at a required calibration date is confounded with
+that date's intercept in time-varying calibration, causing calibration
+failure. Constant calibration may identify its common slope from other
+calibration dates, subject to full pooled rank after date intercepts.
+Uniform, supplied-weight and outcome-only specifications do not acquire
+an OLS rank requirement merely because this scaling fallback is used.
+This convention is implemented in the new internal helper; R validation
+remains pending.
+
+\paragraph{Future-outcome calibration sample.}
+Index the regular dates of a training prefix by $t=1,\ldots,T_c$;
+$t+1$ means the next declared period, not necessarily the next calendar
+integer. Let $Z_{j,t}$ be donor $j$'s transformed feature vector. Relevance
+calibration uses only donor pairs $(Z_{j,t},Y_{j,t+1})$ with
+$t+1\leq T_c$. Features may include current or earlier outcome observations
+when explicitly selected, but not the subsequent response itself.
+The target contributes neither features nor responses to calibration;
+its selected features enter subsequent matching. No response beyond the
+training cutoff may enter calibration, even if it is an untreated donor
+outcome. Earlier-date relevance may use the next response inside the
+prefix: this is predetermination before donor fitting, not real-time
+availability at every earlier date.
+
+OLS without ridge is the agreed calibration estimator. The constant mode
+uses a common slope vector and date-specific intercepts:
+\[
+ Y_{j,t+1}=a_t+\beta^\top Z_{j,t}+\varepsilon_{j,t+1},
+ \qquad j\in\mathcal D,\quad t=1,\ldots,T_c-1.
+\]
+The intercepts enter calibration only, not predictor weights or
+counterfactual construction. The pooled slope vector must be uniquely
+identified after accounting for these date intercepts. The time-varying
+mode uses separate cross-sectional regressions,
+\[
+ Y_{j,t+1}=a_t+\beta_t^\top Z_{j,t}+\varepsilon_{j,t+1},
+ \qquad j\in\mathcal D,\quad t=1,\ldots,T_c-1.
+\]
+It introduces no rolling windows, time-trend restrictions or coefficient
+penalties. Each regression must identify its slopes uniquely; with an
+intercept, $J\geq K+1$ is necessary but does not ensure full rank.
+
+\paragraph{Coefficient conversion and the final training date.}
+Absolute normalization is the default conversion within empirical
+calibration, and squared normalization is the only alternative:
+\[
+ v_{k,t}^{\rm abs}=\frac{|\widehat\beta_{k,t}|}
+ {\sum_{\ell=1}^K|\widehat\beta_{\ell,t}|},\qquad
+ v_{k,t}^{\rm sq}=\frac{\widehat\beta_{k,t}^2}
+ {\sum_{\ell=1}^K\widehat\beta_{\ell,t}^2}.
+\]
+Intercepts are excluded. For constant calibration the common converted
+vector is repeated across training dates. Uniform weighting remains the
+overall fitting default; choosing absolute empirical conversion does not
+replace it. Neither conversion is asserted to dominate the other in
+counterfactual accuracy. LMG and other relevance allocations are outside
+the agreed implementation scope.
+
+In the time-varying mode, the final regression available at this cutoff
+uses $Z_{j,T_c-1}$ and $Y_{j,T_c}$. Retain its converted metric for the
+last training date:
+\[
+ V_{T_c}=V_{T_c-1}.
+\]
+This is an explicit boundary convention in the selected scaled feature
+coordinates, not evidence that relevance is constant at the boundary.
+The final training observations are retained and $w_{T_c}$ is not forced
+to equal $w_{T_c-1}$. Apply this convention separately within every
+validation prefix and the final full-pre-period fit. It is distinct from
+post-treatment endpoint retention of donor weights.
+
+\paragraph{Failures and remaining scope decisions.}
+All-zero slopes or non-unique OLS slopes cause explicit calibration
+failure with diagnostics, not automatic uniform weights, predictor
+deletion, an arbitrary coefficient selection or ridge. Individual
+uniquely estimated zero slopes receive zero weight; other slopes are
+normalized without significance filtering or an arbitrary coefficient-size
+threshold. The numerical rank rule above is approved; its implementation
+and the remaining finite-arithmetic checks require validation.
+A failed required calibration fold is reported, not
+omitted or shifted. No replacement by an earlier successful metric is
+allowed when the final available calibration regression itself fails.
+
+\paragraph{Approved outcome-only specification.}
+The outcome-only option uses one contemporaneous outcome feature at each
+training date, without covariates or an additional lag stack. Its raw
+blocks are $X_{1,t}=Y_{1,t}$ and
+$X_{0,t}=(Y_{2,t},\ldots,Y_{J+1,t})$, so $K=1$ and $V_t=[1]$.
+All designated training dates enter matching, each with its own donor
+vector; the temporal penalty connects these vectors across dates.
+This explicitly selected specification bypasses OLS relevance calibration
+by design, not as a fallback after calibration failure.
+\texttt{tvsc.vmetrics()} still applies the selected scaling and returns
+the one-feature metric. Scaling options, the \texttt{sd} default, both
+penalty orders, chronological tuning and continuation rules are retained.
+Scaling changes the matching--regularization balance at fixed $\lambda$;
+reporting outcomes remain in original units. Within validation, only the
+training prefix supplies fitting inputs, and subsequent target outcomes
+are reserved for scoring. Preparation and metric construction now reflect
+this design in source; fitting integration remains unimplemented.
+Numerical settings and the empirical comparison layout still need to be
+reconciled with these decisions before the complete procedure is implemented.
+
+\subsection{Existing drafts and retained workflow specification}
+The source-level contracts and test chronology below document the earlier
+drafts. Where their public responsibilities or target-inclusive scaling
+differ from Section~\ref{sec:revised-design}, the revised design takes
+precedence for future implementation. Earlier passing checks do not
+validate the revised functions.
+
+The package defaults are first-difference regularization ($q=1$), uniform
+predictor weights ($v_{k,t}=1/K$), chronological pre-treatment selection
+of $\lambda$, and projected increment continuation (D). A researcher may
+override these choices, including supplying a fixed $\lambda\in[0,1)$.
+The agreed scaling default is \texttt{sd}, defined below as a common
+scale obtained from within-date variances, not pooled raw levels.
+These are software defaults, not a claim that the first order is superior.
+Both orders retain equal standing in the empirical comparison.
+The public design separates preparation from optional split construction.
+For chronological selection, the intended sequence is
+\begin{verbatim}
+prepared <- tvsc.dataprep(data, ...)
+splits <- tvsc.split(prepared, initial = ..., horizon = ..., step = ...)
+fit <- tvsc.fit(prepared, q = 1, predictor_weights = "uniform",
+                lambda = "cv", splits = splits,
+                lambda_grid = seq(0, 0.99, by = 0.01),
+                cv_continuation = "projected_increment")
+effects <- tvsc.att(fit, prepared,
+                    continuation = "projected_increment")
+\end{verbatim}
+These calls specify the intended complete interface. On September 15,
+2026, the five preparation and metric functions were renamed from the
+\texttt{panel.*} prefix to \texttt{tvsc.*}, with corresponding source and
+test filenames. Arguments, formulas, defaults, return classes and schema
+versions are unchanged; no compatibility aliases are provided. Current
+names are used below, but the earlier passing transcripts refer to the
+former names, not runs of the renamed files. A subsequent September 15,
+2026 transcript includes renamed definitions and fixtures: preparation,
+splits, blocks and scaling pass. Metrics stops at an incorrect fixture
+expectation: removing the scaling field triggers the earlier recipe
+check. The fixture now distinguishes an absent field from a null-valued
+field; the function body is unchanged. The user subsequently reports a
+metrics pass, supplying only the final assertion and success message.
+The full rerun transcript, file-loading commands, revisions and session information are
+absent; a clean start and independent reproduction are not established.
+An initial
+raw preparation implementation has been written in \texttt{R/tvsc.dataprep.R};
+the user supplied an R console transcript on September 15, 2026 showing the
+raw-preparation checks passing. The R version and sourced-file revision were
+not supplied, and an independent local rerun remains pending. A separate
+split constructor is now written in \texttt{R/tvsc.split.R}, with R
+fixtures in \texttt{tests/test-tvsc.split.R}. A second user-supplied R
+transcript on September 15, 2026 shows these split checks passing, including
+the eight-date example and input-validation cases. Source revisions and
+R session information remain unrecorded; neither run was independently
+reproduced in the manuscript workspace. A raw block builder is now written
+in \texttt{R/tvsc.blocks.R}, with fixtures in
+\texttt{tests/test-tvsc.blocks.R}. A third user-supplied R transcript on
+September 15, 2026 shows the block checks passing, including preservation
+of pre-scaled predictors and transformed-outcome passthrough. The transcript
+does not include source-loading commands, initial panel creation, source
+revisions or R session information; a clean-session reproduction and the
+standalone example remain pending. A separate scaling draft is now written
+in \texttt{R/tvsc.scale.R}, with fixtures in
+\texttt{tests/test-tvsc.scale.R}. A fourth user-supplied R transcript on
+September 15, 2026 shows the displayed scaling checks passing, including
+all four methods, zero-scale rules, cutoff isolation and numerical failure
+cases. Fixture creation is included, but source-loading commands, exact
+revisions and R session information are absent. Independent clean-session
+reproduction and the standalone example remain pending.
+The predictor-metric constructor is now written in
+\texttt{R/tvsc.metrics.R}, with fixtures in
+\texttt{tests/test-tvsc.metrics.R}. It constructs uniform weights or validates
+supplied weights; it does not perform empirical calibration. The reported
+corrected-suite pass is supported only by the supplied ending, not a full
+rerun transcript. Independent reproduction and the standalone example
+remain pending.
+The revised calibration source is described above and awaits R execution;
+fitting, prediction and effect functions remain unimplemented.
+A solver-independent primary-problem builder is now written in
+\texttt{tvsc-problem.R.txt}, with fixtures in
+\texttt{tvsc-problem-test.R.txt}. It constructs dense reference matrices
+and constraints for both orders, not fitted weights. R execution of this
+new suite and its standalone example remains pending; the earlier
+transcripts do not validate it. This builder is set aside while the revised
+preparation and calibration contracts are settled; it is not the immediate
+development checkpoint. The five-function GitHub handoff has not
+yet produced integration results in this workspace.
+A prediction method separates counterfactual construction from
+the treatment-effect calculation.
+If the researcher supplies a fixed penalty, no validation split is required:
+\begin{verbatim}
+fit <- tvsc.fit(prepared, lambda = 0.4)
+\end{verbatim}
+The value 0.4 illustrates a fixed input, not a recommended penalty. This
+call uses the full designated pre-treatment sample. It yields training
+diagnostics, not an out-of-sample assessment.
+
+\subsection{From panel data to fitted donor paths}
+The revised raw preparation draft requires explicit predictor names,
+an integer-valued numeric period index and a declared regular step.
+It returns raw training data, schema metadata and separately stored future
+donor and target outcomes, plus aligned full-pre-period raw blocks. It does
+not accept or estimate a scaling recipe or construct splits. Constant raw predictors
+are retained and flagged. These implementation limits are recorded in the
+strategy note; the paragraphs below describe the intended complete contract.
+
+Begin with a longitudinal table containing unit, date, outcome and predictor
+columns. Specify the target, donor eligibility, intervention date and
+eligible pre-treatment period. The intervention boundary restricts which
+target observations may enter fitting; it is not a training/validation
+split within that period. Preparation requires no validation windows or
+reporting horizon. Validate unique unit--date records, common
+donor ordering, regular spacing and the availability of all required cells.
+The initial workflow rejects unresolved missingness rather than silently
+changing the panel. The proposed \texttt{tvsc.dataprep()} retains raw
+pre-treatment observations and the block-construction and scaling recipes.
+It does not choose cutoffs, fit preprocessing parameters or withhold
+observations for assessment. An internal training builder estimates any
+data-dependent transformations for the actual fitting sample: the full
+designated pre-period for direct fitting, or each prefix during validation.
+Any post-treatment
+target observations are stored separately and are not exposed to fitting
+or tuning. Full-pre-period transformations must not be reused within
+shorter validation prefixes.
+
+The separate \texttt{tvsc.split()} function constructs date assignments
+and fold metadata from the prepared object. It does not scale predictors,
+calibrate metrics, fit weights or return independently transformed datasets.
+Each fold records its training dates, cutoff and subsequent validation
+dates, selecting all eligible units at each date. Windows must be within
+the eligible pre-period, with at least three training dates and a nonempty
+validation window strictly after the fitting cutoff. The agreed interface is
+\begin{verbatim}
+splits <- tvsc.split(prepared, initial, horizon, step = 1)
+\end{verbatim}
+Training windows expand from the first eligible date. The initial size and
+validation horizon are required inputs counting dates, not panel rows;
+the stride defaults to one date. The initial implementation retains only
+full validation windows on that stride, without shortening the final window
+or adding an off-stride cutoff. It reports assessment counts by date and
+all unassessed dates. With eight pre-period dates, an initial size of four
+and horizon of two yield training/validation positions 1--4/5--6,
+1--5/6--7 and 1--6/7--8. Repeated validation dates are not independent
+replications; later scoring must specify their weighting. The split object
+contains a schema copy for downstream compatibility checks, not a checksum
+of the data. It does not reserve an independent test set automatically.
+Chronological tuning requires valid splits, whereas a fixed-penalty fit
+does not. A CV request without an explicit split specification must request that
+information rather than silently create windows or use the training loss.
+Splits can also support held-out assessment, but tuning scores are not an
+independent evaluation of the tuned procedure.
+
+\paragraph{Raw predictor-block assembly.}
+The agreed next layer separates matrix assembly from scaling. Its initial
+implementation uses the already declared contemporaneous predictors:
+\begin{verbatim}
+blocks <- tvsc.blocks(prepared, cutoff = 2003)
+\end{verbatim}
+The cutoff is an explicit date in the designated pre-period, not a row
+number; the prefix must contain at least three dates. For a full fit, supply
+the last declared pre-period date. For a validation fold, supply that fold's
+cutoff. The builder reuses \texttt{tvsc.dataprep()} to validate and order
+only the selected prefix. Schema and stored time indices are checked before
+selection; required numerical values and unit--date completeness are checked
+within the prefix, not across later validation values.
+
+The returned \texttt{tvsc\_blocks} object stores date-named lists
+\texttt{X1} and \texttt{X0}: named length-$K$ target vectors and $K\times J$
+donor matrices, respectively. Predictor and donor ordering follow the
+declared schema; $K=1$ does not drop donor-matrix dimensions. As-supplied
+outcomes are retained separately as a date-named vector \texttt{Y1} and a
+date-by-donor matrix \texttt{Y0}, even when the outcome is not a matching
+predictor. The object includes a prefix-restricted schema, used dates,
+cutoff, dimensions, recipe and prefix-only constant-predictor diagnostics.
+It contains no later observed values or future tables. No lags, summaries,
+scaling, predictor weights or donor weights are constructed. This raw
+builder does not replace the later training-specific transformation layer.
+
+\paragraph{No additional scaling and externally transformed inputs.}
+Here ``raw'' means as supplied to preparation, not necessarily never
+transformed. Both preparation and block assembly already preserve supplied
+values without additional centering or scaling. The agreed future scaling
+interface will support \texttt{scaling = "none"}, meaning no additional
+scaling whether inputs are in economic units or have already been
+transformed. It overrides the agreed \texttt{sd} default described below.
+This argument is implemented in the separate scaling draft, not accepted
+by the existing preparation or block functions. Their
+\texttt{recipe\$scaling = NULL} records no package-applied scaling; it is
+not a claim about upstream processing and should not be replaced manually.
+
+External preprocessing must be documented: affected columns, transformation,
+parameters common to target and donors, output units, and dates and units
+used to estimate the parameters. A learned transformation must use only
+the relevant training prefix during validation. Selecting a prefix from
+previously full-period-standardized values does not remove that information
+leakage. A fixed externally specified unit conversion requires no such
+full-period estimation. The current functions neither verify provenance
+nor reverse earlier transformations.
+
+The outcome column should remain in the intended reporting units. A
+transformed outcome for predictor matching can be supplied separately, for
+example \texttt{outcome = "sales"} with predictors
+\texttt{sales\_scaled} and \texttt{income\_scaled}. The stored outcome
+arrays preserve the supplied outcome column, not automatically recovered
+original units. Upstream transformations of that column therefore require
+an explicit interpretation or a separately specified back-transformation.
+
+\paragraph{Agreed initial scaling scope.}
+This paragraph records the target-inclusive source draft, superseded for
+all revised weighting modes by donor-only learned scaling in
+Section~\ref{sec:revised-design}; its zero-contrast statements refer to
+that original reference population.
+The initial scaling draft offers only \texttt{sd} (the default),
+\texttt{zscore}, \texttt{none} and \texttt{custom}. The source and fixtures
+are written, with a user-reported passing test transcript and independent
+reproduction pending. Pooled-level alternatives,
+MAD, IQR, min--max, maximum-absolute-value and other robust methods are
+deferred. The short names have the following panel-specific definitions.
+
+For a training prefix of length $T_c$, let $N=J+1$ and let $x_{i,k,t}$
+denote predictor $k$ for the target and eligible donors. Define
+\[
+ \bar x_{k,t}=\frac1N\sum_{i=1}^N x_{i,k,t},\qquad
+ s_{k,t}^2=\frac1{N-1}\sum_{i=1}^N(x_{i,k,t}-\bar x_{k,t})^2,
+ \qquad s_{k,c}=\left(\frac1{T_c}\sum_{t=1}^{T_c}s_{k,t}^2\right)^{1/2}.
+\]
+The \texttt{sd} option divides every matching value by $s_{k,c}$,
+without centering. It uses one common scale per predictor throughout
+the prefix: the root mean square of the within-date standard deviations,
+not the standard deviation of pooled raw levels. The \texttt{zscore}
+option instead maps each value to $(x_{i,k,t}-\bar x_{k,t})/s_{k,t}$,
+using a separate center and scale at each training date. The \texttt{none}
+option preserves supplied values; \texttt{custom} divides by positive,
+finite researcher-supplied scales matched by predictor name and common
+across dates. Scaling changes matching blocks only, leaving reporting
+outcomes in their supplied units.
+
+All transformations are common across units at a given date and fixed
+before donor estimation. Learned parameters use only the actual training
+prefix and are reconstructed within each validation fold. No future target
+values enter scaling; continuation uses donor outcomes in reporting units,
+not future target-based z-scores. Store the method, reference units, dates,
+centers, scales and diagnostic decisions.
+
+The agreed call is
+\begin{verbatim}
+scaled <- tvsc.scale(blocks, scaling = "sd", scales = NULL)
+\end{verbatim}
+It accepts raw blocks and returns a new object inheriting from
+\texttt{tvsc\_scaled\_blocks} and \texttt{tvsc\_blocks}. A non-null
+\texttt{recipe\$scaling} records the method, formula identifier, reference
+units, fitting dates, cutoff, applied centers and divisors, estimated
+within-date SDs when applicable, and fallback diagnostics. Parameter
+matrices have predictor rows and date columns. Custom scales must be named
+exactly once for every predictor and are aligned by name; they are rejected
+for other methods. Every output, including \texttt{none}, is marked as
+processed and cannot be passed through scaling again. Another choice must
+start from raw blocks. The identity method records zero centers and unit
+divisors without arithmetic on the input predictor arrays.
+
+Under \texttt{sd}, exact equality across all reference units at every
+training date permits a divisor-1 fallback, recorded for all dates of that
+predictor. Under \texttt{zscore}, exact equality at an individual date uses
+its common value as center and divisor 1, producing zeros. These cells
+have no matching contrast; predictors are retained and predictor weights
+are not renormalized. A zero or nonfinite computed SD despite unequal
+values is a numerical error, not a fallback. Positive scales are neither
+clipped nor floored; nonfinite transformed values are rejected. The
+implementation records the smallest positive applied divisor and fallback
+count, without certifying solver conditioning. Original raw-block
+diagnostics and reporting outcomes are preserved unchanged.
+
+Common centering cancels from simplex-weighted discrepancies, but scaling
+does not. If $e_{k,t}$ is a supplied-unit discrepancy, for positive
+estimated scales the effective
+coefficient is $v_{k,t}/s_{k,c}^2$ under \texttt{sd} and
+$v_{k,t}/s_{k,t}^2$ under \texttt{zscore}; fallback cells instead use the
+applied unit divisor. The latter method therefore changes
+date-specific matching priorities; these options are not merely centered
+and uncentered versions of the same criterion. Uniform predictor weights
+mean equal coefficients in the chosen scaled units, not equal economic
+importance. Within-date dispersion excludes common time shifts that cancel
+from matching discrepancies but can inflate pooled-level dispersion.
+This motivates the default without establishing optimality or statistical
+consistency. The conditional theory applies to the resulting finite
+transformed blocks; scaling alone supplies no asymptotic guarantee.
+
+Next construct predictor blocks and transformations within the designated
+training sample. Supply uniform predictor weights or run the separately
+specified empirical calibration, then freeze $\mathcal V$. A calibration
+must define its response, regressors, dates, pooling or time variation,
+and rules for rank deficiency and zero normalization denominators. Its
+response must not also appear as an identical predictor. A common pooled
+regression does not by itself specify date-varying coefficient vectors.
+For an empirical metric, retain the calibration output and its provenance
+so that it can be reproduced independently of donor fitting.
+
+The initial \texttt{tvsc.metrics()} interface separates this validation
+step from empirical calibration. Let $T_c$ denote the number of dates in
+the supplied training prefix. The three accepted input shapes produce
+\[
+ v_{k,t}=\begin{cases}
+  1/K, & \text{uniform},\\
+  a_k, & \text{supplied common vector }a,\\
+  M_{k,t}, & \text{supplied }K\times T_c\text{ matrix }M.
+ \end{cases}
+\]
+The vector and matrix must have finite nonnegative entries and unit column
+sums, subject to an explicitly recorded numerical tolerance. Vector names
+must cover the predictors; matrix row and column names must cover the
+predictors and prefix dates exactly once. Order may differ; missing or
+extra labels are rejected. The source draft accepts an absolute sum error
+of at most \texttt{tolerance = 1e-8} by default and requires positive sums.
+It preserves accepted values without renormalization or clipping, so
+numerical acceptance does not assert exact unit sums. Zero entries are
+allowed. These are input shapes, not automatic labels of empirical origin.
+\begin{verbatim}
+scaled <- tvsc.scale(tvsc.blocks(prepared, cutoff), "sd")
+metrics <- tvsc.metrics(scaled, predictor_weights = "uniform")
+\end{verbatim}
+Use \texttt{tvsc.scale(..., "none")} to declare no scaling explicitly.
+The returned \texttt{tvsc\_metrics} object stores a canonical
+predictor-by-date weight matrix, schema, cutoff, scaling record and
+diagnostics. It reads no numerical predictor or outcome values to construct
+weights and does not validate those arrays. Alignment checks do not
+authenticate the scaling record or establish absence of leakage from
+upstream calibration. An optional \texttt{provenance} description is stored
+as unverified. The eventual fitter must validate numerical arrays and
+compatibility with these metrics. Supplied empirical weights must still
+be recalibrated within each fitting prefix; slicing a full-period
+calibration is not sufficient. Both orders and all candidate penalties
+share the same frozen prefix-specific blocks and metrics.
+
+For each $q$ and candidate $\lambda$, construct the matrices in
+Section~\ref{sec:framework} and solve the quadratic program
+\[
+ \min_{\theta\in\mathcal C}\frac12\theta^\top P_q\theta+c^\top\theta,
+\]
+\[
+ P_q=2\{(1-\lambda)\mathcal A^\top\mathcal A+
+                      \lambda\mathcal D_q^\top\mathcal D_q\},
+ \qquad c=-2(1-\lambda)\mathcal A^\top b.
+\]
+The omitted term $(1-\lambda)b^\top b$ is constant. The source draft
+\texttt{tvsc.problem(blocks, metrics, lambda, q = 1)} retains it explicitly,
+returning \texttt{P}, \texttt{linear} and \texttt{constant} so that
+\[
+ F(\theta)=\tfrac12\theta^\top P_q\theta+c^\top\theta
+                         +(1-\lambda)b^\top b.
+\]
+It also retains $\mathcal A$, $b$ and $\mathcal D_q$. Coordinates stack
+donors in their declared order within each date. With
+$S=I_T\otimes\mathbf1_J^\top$, its constraints are
+$S\theta=\mathbf1_T$ and $0\leq\theta\leq1$; the upper bounds are
+redundant but explicit. Differences count declared period steps, not
+calendar-index distances. Metrics and scaling metadata must agree, and
+the builder revalidates numerical predictor arrays. It does not read or
+numerically validate reporting outcomes, calibrate metrics or solve either
+selection problem. Dense storage is intended for small reference checks,
+not a measured performance claim. Nonfinite arithmetic produces an error.
+The stored $\mathcal D_q$ is unweighted even at $\lambda=0$; a later
+secondary solve must use its $\sqrt\lambda$ scaling as specified in the
+appendix, not impose an unscaled difference-image equality.
+
+Numerical singularity is not a
+reason to add an unreported ridge term. Apply the secondary selection
+rule, with explicit tolerances for feasibility, objective accuracy and
+preservation of the primary solution images; its exact formulation is
+given in Supplement~\ref{app:selection}. Retain failure statuses rather
+than replacing unsuccessful fits with a different estimator.
+
+By default, select $\lambda$ by chronological pre-treatment validation.
+At each cutoff, repeat block construction, scaling and any
+predictor-weight calibration using that prefix alone, fit the donor path,
+and predict the subsequent untreated observations using D. For a fixed
+order and predictor-weighting specification, let $c_f$ denote a fitting
+cutoff and $\mathcal H_f$ its subsequent untreated validation dates. Use
+\begin{equation}\label{eq:lambda-validation}
+ \widehat\lambda\in\arg\min_{\lambda\in\mathcal G}
+ \frac1{|\mathcal F|}\sum_{f\in\mathcal F}\frac1{|\mathcal H_f|}
+ \sum_{t\in\mathcal H_f}
+ \left(y_t-x_t^\top\widehat w^D_{t\mid c_f}(\lambda)\right)^2.
+\end{equation}
+The weights in this expression are refitted within each prefix using its
+predetermined metrics. Target validation outcomes enter only the score;
+contemporaneous donor outcomes enter prediction. Select $\lambda$ separately
+for each dynamic specification, using common validation dates and horizons.
+
+The default grid is $\mathcal G=\{0,0.01,\ldots,0.99\}$, containing
+100 values and shared across the two orders. Its equivalent additive
+coefficients range from zero to 99 and are not equally spaced. This is
+a finite search range, not the entire theoretical domain. Other declared
+finite grids in $[0,1)$ are permitted. Record any upper-bound selection;
+endpoints, spacing, the tie rule and any boundary-triggered expansion must
+be specified before assessment and use training information only.
+A candidate is ineligible if any required validation fit fails its
+acceptance checks; do not average only its successful folds. If none is
+eligible, report selection failure rather than changing validation dates.
+Predictor-weighting modes remain declared specifications, not variables
+jointly optimized with donor weights. If a researcher instead chooses E
+as the prediction procedure, its tuning score must use E consistently.
+
+Scores used for tuning are validation scores, not independent tests.
+Where the pre-period allows, reserve additional assessment dates outside
+tuning. After configuration choices are fixed, repeat the entire workflow
+on the full designated pre-treatment period. Store the predetermined metrics,
+selected penalty, donor paths and diagnostics. Within-fit E/D comparisons
+use the same fitted configuration; separately tuned E/D comparisons must
+be labeled as comparisons of complete procedures.
+
+The proposed \texttt{tvsc.fit()} returns a model object rather than only
+a weight matrix. It stores donor identities and ordering, the fitted path,
+endpoint and final increment, predetermined metrics and transformations,
+$q$ and selected $\lambda$, training predictions and residuals, RMSE and
+MAE, fold-level validation scores, cutoffs and horizons, and numerical
+acceptance diagnostics. The stored \texttt{cv\_continuation} identifies
+the extension used during tuning. Empirical calibration remains a separate,
+explicitly supplied procedure, not an implicit optimization over predictor
+weights inside the donor solver.
+
+\subsection{From fitted paths to treatment effects}
+Extend each accepted donor path using \eqref{eq:continuation}, and form
+untreated predictions from contemporaneous donor outcomes. A static fit
+retains its common donor vector. A rejected dynamic fit makes both of its
+continuation outputs unavailable. No post-treatment target observation
+can revise the metrics, regularization or donor weights.
+
+The proposed prediction method accepts the fitted object, aligned donor
+outcomes as \texttt{newdata}, and a continuation rule. It requires no target
+outcomes. The
+\texttt{tvsc.att()} function uses this same prediction operation and then
+joins the observed target outcomes. Its continuation argument accepts
+\texttt{projected\_increment} (D, the default) or \texttt{endpoint} (E),
+without refitting or recalibrating. Results record both the continuation
+actually used and the fitted object's tuning continuation. Choosing E for
+a D-tuned object is an endpoint prediction from a D-tuned fit, not an
+independently tuned E procedure. The latter requires a new fit with
+\texttt{cv\_continuation = "endpoint"}.
+
+Only after the predictions are fixed, join the observed treated outcomes
+and compute
+\begin{equation}\label{eq:effects}
+ \widehat\tau^R_{T+h}=Y^{\rm obs}_{1,T+h}
+                         -\widehat Y^R_{1,T+h}(0),\qquad
+ \widehat{\operatorname{ATT}}^R_H
+                 =\frac1H\sum_{h=1}^H\widehat\tau^R_{T+h}.
+\end{equation}
+The corresponding target is
+$\operatorname{ATT}_H=H^{-1}\sum_{h=1}^H\tau_{T+h}$.\footnote{For this
+single-treated-unit design, ATT denotes an average over a declared set
+of post-treatment dates, not a population average across treated units.}
+All methods use the same declared complete reporting window. Missing
+predictions or target outcomes make that window's estimate unavailable
+unless a separate missing-data procedure has been specified.
+
+When the observed target outcome equals $Y(1)$,
+\[
+ \widehat{\operatorname{ATT}}^R_H-\operatorname{ATT}_H
+ =\frac1H\sum_{h=1}^H
+       \{Y_{1,T+h}(0)-\widehat Y^R_{1,T+h}(0)\}.
+\]
+Consequently, valid bounds on absolute counterfactual errors also bound the
+absolute ATT error by their average. This is a conditional implication,
+not an estimated standard error. Interpreting the gaps causally requires
+credible untreated donors, no relevant spillovers or anticipation, and
+an adequate untreated relationship across the cutoff \cite{abadie2021}.
+
+The package should return fitted and extended donor weights, supplied
+predictor weights, outcome paths, annual gaps, average effects, fit and
+validation scores, and numerical diagnostics. Plotting functions should
+use common axes and reporting windows across methods. Data preparation,
+calibration, fitting, prediction and scoring remain separate operations,
+with saved settings sufficient to reconstruct each result.
+
+
+\section{Implementation and validation to be completed}
+The first implementation will need to validate preparation without splits,
+the separate date-based split constructor and information separation,
+training-specific preprocessing, both penalty orders, chronological tuning,
+secondary selection and both continuation rules. Deterministic test
+fixtures should check simplex feasibility, objective and matrix scaling,
+known small-problem solutions, failure handling and agreement of effect
+calculations with saved predictions. These software checks are distinct
+from a Monte Carlo performance study; no such study is proposed here.
+
+Timing and numerical acceptance results must be measured after the
+implementation exists, not inferred from convexity alone. Reproducible
+examples and environment records will accompany the software paper.
+The substantive California results, eight-case comparison and treatment
+effect interpretation belong in the methodological paper, using the
+validated functions and a recorded software version.
+
+\section{Conclusion}
+The workflow separates operations that use different information and
+serve different purposes. Predictor calibration precedes donor fitting;
+validation uses untreated assessment outcomes only for scoring; and
+counterfactual prediction precedes treatment-effect calculation. This
+paper will document how the implementation enforces these distinctions.
+Preparation is usable without validation, while chronological penalty
+selection requires declared splits. The current focus is to settle these
+remaining fitting contracts and validate the staged implementation. The
+revised interface combines raw preparation and block construction, and
+combines scaling and predictor metrics under \texttt{tvsc.vmetrics()}.
+Donor-only future-outcome OLS calibration, absolute conversion by default,
+date-by-date time-varying slopes and final-date metric retention are now
+specified as design choices. Preparation/block integration and split-input
+compatibility are now revised in source, with both fixture suites passing
+in the supplied user-run R transcript. Independent reproduction remains
+pending. The new metric-construction source now implements donor-only
+scaling and calibration, with a user-reported fixture pass supported only
+by the final isolated-loading excerpt; the full log and independent
+reproduction remain pending. Fitting,
+prediction and effect operations remain unimplemented; earlier user-run
+checks concern the previous source drafts. The
+methodological paper remains the theory baseline.
+
+\begin{thebibliography}{9}
+\bibitem{abadie2021}
+Abadie, A. (2021). Using synthetic controls: Feasibility, data requirements,
+and methodological aspects. \emph{Journal of Economic Literature},
+59(2), 391--425. DOI: \nolinkurl{10.1257/jel.20191450}.
+\end{thebibliography}
+
+\appendix
+\section{Numerical selection contract}\label{app:selection}
+Given an exact primary minimizer $\theta_p$, the exact secondary problem is
+\[
+ \min_{\theta\in\mathcal C}\|\theta\|_2^2
+ \quad\text{subject to}\quad
+ \mathcal A\theta=\mathcal A\theta_p,\qquad
+ \sqrt\lambda\mathcal D_q\theta=\sqrt\lambda\mathcal D_q\theta_p.
+\]
+The methodological paper proves that these image constraints characterize
+the primary minimizer set. At $\lambda=0$ the difference-image condition is
+vacuous; imposing the unscaled condition would change the estimator.
+Approximate image preservation must not be described as certification of
+exact minimum-norm selection. Acceptance tolerances and failures must be
+recorded. Because the mixing objective is $1-\lambda$ times its equivalent
+additive objective, objective-gap tolerances must be rescaled when comparing
+those representations. The primary and secondary numerical algorithms
+and their validation remain implementation work.
+\end{document}
