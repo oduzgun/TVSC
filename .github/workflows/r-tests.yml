@@ -26,6 +26,9 @@ jobs:
       - name: Run panel.blocks fixtures
         run: Rscript tests/test-panel.blocks.R
 
+      - name: Run panel.scale fixtures
+        run: Rscript --vanilla tests/test-panel.scale.R
+
       - name: Run documented panel.split example
         run: |
           Rscript -e '
@@ -74,6 +77,34 @@ jobs:
             identical(dim(blocks$X0[["2000"]]), c(2L, 2L))
           )
           cat("Documented panel.blocks example passed.\n")
+          '
+
+      - name: Run documented panel.scale example
+        run: |
+          Rscript --vanilla -e '
+          source("R/panel.dataprep.R")
+          source("R/panel.blocks.R")
+          source("R/panel.scale.R")
+          panel <- expand.grid(
+            state = c("Target", "DonorA", "DonorB"),
+            year = 2000:2005,
+            stringsAsFactors = FALSE
+          )
+          panel$sales <- seq_len(nrow(panel)) * 10
+          prepared <- panel.dataprep(
+            panel, "state", "year", "sales", "Target",
+            c("DonorB", "DonorA"), 2005, 2000:2004, "sales"
+          )
+          blocks <- panel.blocks(prepared, 2003)
+          scaled <- panel.scale(blocks)
+          unchanged <- panel.scale(blocks, "none")
+          stopifnot(
+            inherits(scaled, "tvsc_scaled_blocks"),
+            identical(unchanged$X0, blocks$X0),
+            identical(scaled$Y0, blocks$Y0),
+            identical(dim(scaled$recipe$scaling$divisors), c(1L, 4L))
+          )
+          cat("Documented panel.scale example passed.\n")
           '
 
       - name: Record session info
