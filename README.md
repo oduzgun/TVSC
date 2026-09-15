@@ -2,20 +2,22 @@
 
 R functions in development for preparing panel data and supporting a chronological synthetic-control workflow.
 
-The project accompanies two manuscripts: a methodological paper on temporally regularized synthetic control and a companion paper on the R workflow. Current source drafts cover **raw panel-data preparation and chronological split construction**; estimation and treatment-effect functions are planned.
+The project accompanies two manuscripts: a methodological paper on temporally regularized synthetic control and a companion paper on the R workflow. Current source drafts cover **raw panel-data preparation, chronological split construction and cutoff-specific raw predictor blocks**; scaling, estimation and treatment-effect functions are planned.
 
 ## Development status
 
 - `panel.dataprep()` is available as an initial source-code draft.
 - `panel.split()` is available as an initial source-code draft.
+- `panel.blocks()` is available as an initial source-code draft.
 - Base-R test fixtures are provided in `tests/test-panel.dataprep.R`.
 - Base-R split fixtures are provided in `tests/test-panel.split.R`.
+- Base-R block fixtures are provided in `tests/test-panel.blocks.R`.
 - This repository is not yet an installable R package or a validated software release.
 - No empirical results are supplied by this implementation.
 
 ## Available function: `panel.dataprep()`
 
-Prepare a consistently ordered, explicitly selected pre-treatment panel for one target unit and at least two donors. Preserve the original measurement values and retain available post-treatment outcomes separately.
+Prepare a consistently ordered, explicitly selected pre-treatment panel for one target unit and at least two donors. Preserve the supplied measurement values and retain available post-treatment outcomes separately.
 
 The function checks identifiers, dates, panel completeness and required training values. It deliberately does **not** create validation splits, standardize predictors, estimate weights, impute missing values or calculate treatment effects.
 
@@ -99,7 +101,7 @@ A list of class `tvsc_prepared` with the following components:
 | --- | --- |
 | `schema_version` | Object-schema version, currently `1L`. |
 | `schema` | Column roles, predictor names, target and ordered donor IDs, intervention date, pre-period and period spacing. |
-| `training` | Selected pre-treatment observations in original measurement units, ordered by date and then target/donor order. Contains identifier, outcome and predictor columns. |
+| `training` | Selected pre-treatment observations in supplied measurement units, ordered by date and then target/donor order. Contains identifier, outcome and predictor columns. |
 | `future_donors` | Available donor observations from the intervention date onward, retaining unit, time and outcome columns. |
 | `future_target` | Available observed target outcomes from the intervention date onward, stored separately from training. These are not untreated counterfactuals. |
 | `recipe` | Contemporaneous-block declaration, deferred scaling (`NULL`) and an indicator of whether the outcome is a predictor. |
@@ -208,6 +210,87 @@ A list of class `tvsc_splits` with the following components:
 - Repeated assessment dates across folds are retained and reported through `assessment_counts`.
 - Downstream fitting must still check schema compatibility and estimate any data-dependent transformations within each training prefix.
 
+## Available function: `panel.blocks()`
+
+Assemble contemporaneous predictor blocks for a chosen training prefix, preserving supplied values. Scaling remains a separate, explicitly specified operation, which may be skipped deliberately.
+
+The function requires `panel.dataprep()` to be loaded. It revalidates required prefix records and numeric values through the existing preparation routine, but it does not modify the prepared object, use later predictor or outcome values, inspect future outcome tables, create lags or summaries, choose predictor weights, fit donor weights, score folds or calculate treatment effects.
+
+### Loading the block builder
+
+From the repository root:
+
+```r
+source("R/panel.dataprep.R")
+source("R/panel.blocks.R")
+```
+
+### Block example
+
+```r
+panel <- expand.grid(
+  state = c("Target", "DonorA", "DonorB"),
+  year = 2000:2007,
+  stringsAsFactors = FALSE
+)
+panel$sales <- seq_len(nrow(panel)) * 10
+panel$income <- 1000 + seq_len(nrow(panel))
+
+prepared <- panel.dataprep(
+  panel, "state", "year", "sales", "Target", c("DonorB", "DonorA"),
+  2006, 2000:2005, c("income", "sales")
+)
+
+blocks <- panel.blocks(prepared, cutoff = 2003)
+blocks$X1[["2000"]]
+blocks$X0[["2000"]]
+blocks$Y0
+```
+
+### Block usage
+
+```r
+panel.blocks(prepared, cutoff)
+```
+
+| Argument | Description |
+| --- | --- |
+| `prepared` | Schema-version-1 `tvsc_prepared` object produced by `panel.dataprep()`, with a contemporaneous recipe and `scaling = NULL`. |
+| `cutoff` | Required actual date in `prepared$schema$pre_period`, leaving at least three prefix dates. This is not a row number and not a date-position index. |
+
+Use `tail(prepared$schema$pre_period, 1)` for full-pre-period assembly or a split fold's `cutoff` for fold-specific block construction.
+
+### Returned block object
+
+A list of class `tvsc_blocks` with the following components:
+
+| Component | Contents |
+| --- | --- |
+| `schema_version` | Block-object schema version, currently `1L`. |
+| `schema` | Validated roles, predictor order and donor order, with `pre_period` restricted to the selected prefix. |
+| `periods`, `cutoff` | Prefix dates and final included date. |
+| `dimensions` | Counts of predictors, donors and periods. |
+| `X1` | Date-named list of named length-K target predictor vectors. |
+| `X0` | Date-named list of K-by-J donor predictor matrices, with predictor rows and ordered donor columns. A single predictor remains a matrix. |
+| `Y1` | Date-named target outcome vector. |
+| `Y0` | Date-by-donor outcome matrix in the supplied outcome column's units. |
+| `recipe` | Contemporaneous blocks, `scaling = NULL`, and outcome-in-predictors indicator. |
+| `diagnostics` | Prefix row count and predictors constant across that prefix. Constant predictors are retained. |
+
+The outcome is returned separately even when it is omitted from matching predictors. It is never silently added to `X1` or `X0`.
+
+### Block boundaries and scaling
+
+- The cutoff must match an actual declared pre-treatment date.
+- The selected prefix expands from the first declared pre-treatment date through the cutoff and must contain at least three dates.
+- Required unit-date keys and numeric outcome/predictor values are revalidated within the prefix.
+- Later pre-treatment values and future tables are excluded from construction and numeric validation.
+- Declared donor and predictor ordering are preserved.
+- `recipe$scaling = NULL` means these functions applied no package scaling. It does not certify that the researcher supplied original-unit, untransformed values.
+- Externally scaled predictor columns are preserved exactly as supplied.
+- `Y1` and `Y0` remain in the supplied outcome column's units. To match on a scaled outcome while reporting an original-unit outcome, supply separate columns, for example `outcome = "sales"` and `predictors = c("sales_scaled", "income_scaled")`.
+- Externally learned transformations must respect each validation training cutoff. Selecting a prefix here cannot repair leakage from full-period preprocessing.
+
 ## Tests
 
 From the repository root, in an environment with R installed:
@@ -215,11 +298,12 @@ From the repository root, in an environment with R installed:
 ```sh
 Rscript tests/test-panel.dataprep.R
 Rscript tests/test-panel.split.R
+Rscript tests/test-panel.blocks.R
 ```
 
-The preparation fixtures cover ordering, incomplete or duplicated training panels, invalid identifiers and dates, nonfinite training values, constant predictors, outcome-only predictors, and separation of training from future outcome values. Split fixtures cover the eight-date example, complete-window and stride rules, date spacing, all-unit membership, unchanged input data, value-independent assignments and invalid arguments.
+The preparation fixtures cover ordering, incomplete or duplicated training panels, invalid identifiers and dates, nonfinite training values, constant predictors, outcome-only predictors, and separation of training from future outcome values. Split fixtures cover the eight-date example, complete-window and stride rules, date spacing, all-unit membership, unchanged input data, value-independent assignments and invalid arguments. Block fixtures cover exact cells, dimensions and names, row-order invariance, cutoff isolation, constant-predictor diagnostics, a single predictor, omitted outcomes, numeric and factor IDs, non-unit period spacing, malformed inputs, pre-scaled input preservation and transformed-outcome passthrough.
 
-The tests use only base R. The preparation fixtures print `All raw panel preparation checks passed.` when successful. The split fixtures print `All chronological panel split checks passed.` when successful. The GitHub Actions workflow runs both test scripts and a documented splitter example.
+The tests use only base R. The preparation fixtures print `All raw panel preparation checks passed.` when successful. The split fixtures print `All chronological panel split checks passed.` when successful. The block fixtures print `All raw predictor block checks passed.` when successful. The GitHub Actions workflow runs all three test scripts and documented splitter/block examples.
 
 ## Roadmap
 
@@ -229,12 +313,13 @@ These names describe the intended interface, not currently callable functions:
 | --- | --- | --- |
 | `panel.dataprep()` | Validate and retain the raw selected panel. | Documented source draft with base-R fixtures. |
 | `panel.split()` | Construct expanding-window training/assessment assignments. | Documented source draft with base-R fixtures. |
-| Predictor-block construction and calibration | Build fitting inputs under explicit, cutoff-aware transformation and predictor-weight rules. | Planned; design choices remain open. |
+| `panel.blocks()` | Assemble contemporaneous, as-supplied predictor and outcome blocks for an explicit cutoff. | Documented source draft with base-R fixtures. |
+| Scaling and predictor-weight calibration | Apply declared transformations and construct predetermined predictor metrics. | Planned; design choices remain open. |
 | `tvsc.fit()` | Fit simplex donor-weight paths with first- or second-difference regularization. | Planned. |
 | A `predict()` method | Continue fitted donor weights and construct counterfactual outcomes. | Planned. |
 | `tvsc.att()` | Calculate date-specific gaps and average effects over explicit windows. | Planned. |
 
-The next design checkpoint concerns predictor-block construction and the economic scaling convention. Package structure, release automation and distribution details will follow separately.
+The next design checkpoint concerns the scaling interface. Package structure, release automation and distribution details will follow separately.
 
 ## Reporting problems
 
