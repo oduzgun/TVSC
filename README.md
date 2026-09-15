@@ -2,22 +2,28 @@
 
 R functions in development for preparing panel data and supporting a chronological synthetic-control workflow.
 
-The project accompanies two manuscripts: a methodological paper on temporally regularized synthetic control and a companion paper on the R workflow. Current source drafts cover **raw panel-data preparation, chronological split construction, cutoff-specific raw predictor blocks and predictor scaling**; calibration, estimation and treatment-effect functions are planned.
+The project accompanies two manuscripts: a methodological paper on temporally regularized synthetic control and a companion paper on the R workflow. Current source drafts cover **raw panel-data preparation, chronological split construction, cutoff-specific raw predictor blocks, predictor scaling and supplied predictor-metric construction**; calibration, estimation and treatment-effect functions are planned.
 
 ## Development status
 
-- `panel.dataprep()` is available as an initial source-code draft.
-- `panel.split()` is available as an initial source-code draft.
-- `panel.blocks()` is available as an initial source-code draft.
-- `panel.scale()` is available as an initial source-code draft.
-- Base-R test fixtures are provided in `tests/test-panel.dataprep.R`.
-- Base-R split fixtures are provided in `tests/test-panel.split.R`.
-- Base-R block fixtures are provided in `tests/test-panel.blocks.R`.
-- Base-R scaling fixtures are provided in `tests/test-panel.scale.R`.
+- `tvsc.dataprep()` is available as an initial source-code draft.
+- `tvsc.split()` is available as an initial source-code draft.
+- `tvsc.blocks()` is available as an initial source-code draft.
+- `tvsc.scale()` is available as an initial source-code draft.
+- `tvsc.metrics()` is available as an initial source-code draft.
+- Base-R test fixtures are provided in `tests/test-tvsc.dataprep.R`.
+- Base-R split fixtures are provided in `tests/test-tvsc.split.R`.
+- Base-R block fixtures are provided in `tests/test-tvsc.blocks.R`.
+- Base-R scaling fixtures are provided in `tests/test-tvsc.scale.R`.
+- Base-R metrics fixtures are provided in `tests/test-tvsc.metrics.R`.
 - This repository is not yet an installable R package or a validated software release.
 - No empirical results are supplied by this implementation.
 
-## Available function: `panel.dataprep()`
+## Naming migration
+
+The public source names use the `tvsc.*` prefix: `tvsc.dataprep()`, `tvsc.split()`, `tvsc.blocks()`, `tvsc.scale()` and `tvsc.metrics()`. Earlier `panel.*` names are not retained as aliases in this source draft. Restart R before loading the renamed files so old bindings cannot mask a missed migration.
+
+## Available function: `tvsc.dataprep()`
 
 Prepare a consistently ordered, explicitly selected pre-treatment panel for one target unit and at least two donors. Preserve the supplied measurement values and retain available post-treatment outcomes separately.
 
@@ -28,7 +34,7 @@ The function checks identifiers, dates, panel completeness and required training
 The function uses base R and requires no additional R packages. From the repository root:
 
 ```r
-source("R/panel.dataprep.R")
+source("R/tvsc.dataprep.R")
 ```
 
 This is a source-script repository, not an R package. A minimum supported R version has not yet been established through release testing.
@@ -38,7 +44,7 @@ This is a source-script repository, not an R package. A minimum supported R vers
 The following artificial data illustrate the interface; they are not an empirical application or a simulation study.
 
 ```r
-source("R/panel.dataprep.R")
+source("R/tvsc.dataprep.R")
 
 panel <- expand.grid(
   state = c("Target", "DonorA", "DonorB"),
@@ -48,7 +54,7 @@ panel <- expand.grid(
 panel$sales <- seq_len(nrow(panel)) * 10
 panel$income <- 1000 + seq_len(nrow(panel))
 
-prepared <- panel.dataprep(
+prepared <- tvsc.dataprep(
   data = panel,
   unit = "state",
   time = "year",
@@ -71,7 +77,7 @@ The intended result contains nine training rows: three units observed at three p
 ### Usage
 
 ```r
-panel.dataprep(
+tvsc.dataprep(
   data, unit, time, outcome, treated, donors,
   intervention_time, pre_period, predictors,
   period_step = 1
@@ -123,11 +129,11 @@ A list of class `tvsc_prepared` with the following components:
 
 ### Why splitting is separate
 
-Data preparation describes the panel; validation splitting describes an analysis design. The separate `panel.split()` draft creates chronological training and assessment assignments from the prepared object.
+Data preparation describes the panel; validation splitting describes an analysis design. The separate `tvsc.split()` draft creates chronological training and assessment assignments from the prepared object.
 
 The intended workflow permits fitting on the full declared pre-period when tuning choices are supplied. When chronological validation is used, any data-dependent transformations and calibration must instead be learned within the corresponding training prefix—not from the full pre-period before splitting. Those later steps are not implemented here.
 
-## Available function: `panel.split()`
+## Available function: `tvsc.split()`
 
 Construct expanding-window chronological splits from a prepared panel. Training and validation assignments are dates, not individual panel rows: all selected units belong to the same window at each assigned date.
 
@@ -138,8 +144,8 @@ The function uses schema metadata from a schema-version-1 `tvsc_prepared` object
 From the repository root:
 
 ```r
-source("R/panel.dataprep.R")
-source("R/panel.split.R")
+source("R/tvsc.dataprep.R")
+source("R/tvsc.split.R")
 ```
 
 ### Split example
@@ -152,12 +158,12 @@ panel <- expand.grid(
 )
 panel$sales <- seq_len(nrow(panel)) * 10
 
-prepared <- panel.dataprep(
+prepared <- tvsc.dataprep(
   panel, "state", "year", "sales", "Target", c("DonorB", "DonorA"),
   2008, 2000:2007, "sales"
 )
 
-splits <- panel.split(prepared, initial = 4, horizon = 2, step = 1)
+splits <- tvsc.split(prepared, initial = 4, horizon = 2, step = 1)
 splits$folds[[1]]
 splits$diagnostics
 ```
@@ -175,12 +181,12 @@ Validation dates may repeat across folds, and earlier validation dates may becom
 ### Split usage
 
 ```r
-panel.split(prepared, initial, horizon, step = 1)
+tvsc.split(prepared, initial, horizon, step = 1)
 ```
 
 | Argument | Description |
 | --- | --- |
-| `prepared` | Unmodified schema-version-1 `tvsc_prepared` object produced by `panel.dataprep()`. |
+| `prepared` | Unmodified schema-version-1 `tvsc_prepared` object produced by `tvsc.dataprep()`. |
 | `initial` | Required number of dates in the first training window; must be at least three. |
 | `horizon` | Required positive number of subsequent validation dates per fold. |
 | `step` | Positive number of dates by which the cutoff advances; defaults to `1`. |
@@ -212,19 +218,19 @@ A list of class `tvsc_splits` with the following components:
 - Repeated assessment dates across folds are retained and reported through `assessment_counts`.
 - Downstream fitting must still check schema compatibility and estimate any data-dependent transformations within each training prefix.
 
-## Available function: `panel.blocks()`
+## Available function: `tvsc.blocks()`
 
 Assemble contemporaneous predictor blocks for a chosen training prefix, preserving supplied values. Scaling remains a separate, explicitly specified operation, which may be skipped deliberately.
 
-The function requires `panel.dataprep()` to be loaded. It revalidates required prefix records and numeric values through the existing preparation routine, but it does not modify the prepared object, use later predictor or outcome values, inspect future outcome tables, create lags or summaries, choose predictor weights, fit donor weights, score folds or calculate treatment effects.
+The function requires `tvsc.dataprep()` to be loaded. It revalidates required prefix records and numeric values through the existing preparation routine, but it does not modify the prepared object, use later predictor or outcome values, inspect future outcome tables, create lags or summaries, choose predictor weights, fit donor weights, score folds or calculate treatment effects.
 
 ### Loading the block builder
 
 From the repository root:
 
 ```r
-source("R/panel.dataprep.R")
-source("R/panel.blocks.R")
+source("R/tvsc.dataprep.R")
+source("R/tvsc.blocks.R")
 ```
 
 ### Block example
@@ -238,12 +244,12 @@ panel <- expand.grid(
 panel$sales <- seq_len(nrow(panel)) * 10
 panel$income <- 1000 + seq_len(nrow(panel))
 
-prepared <- panel.dataprep(
+prepared <- tvsc.dataprep(
   panel, "state", "year", "sales", "Target", c("DonorB", "DonorA"),
   2006, 2000:2005, c("income", "sales")
 )
 
-blocks <- panel.blocks(prepared, cutoff = 2003)
+blocks <- tvsc.blocks(prepared, cutoff = 2003)
 blocks$X1[["2000"]]
 blocks$X0[["2000"]]
 blocks$Y0
@@ -252,12 +258,12 @@ blocks$Y0
 ### Block usage
 
 ```r
-panel.blocks(prepared, cutoff)
+tvsc.blocks(prepared, cutoff)
 ```
 
 | Argument | Description |
 | --- | --- |
-| `prepared` | Schema-version-1 `tvsc_prepared` object produced by `panel.dataprep()`, with a contemporaneous recipe and `scaling = NULL`. |
+| `prepared` | Schema-version-1 `tvsc_prepared` object produced by `tvsc.dataprep()`, with a contemporaneous recipe and `scaling = NULL`. |
 | `cutoff` | Required actual date in `prepared$schema$pre_period`, leaving at least three prefix dates. This is not a row number and not a date-position index. |
 
 Use `tail(prepared$schema$pre_period, 1)` for full-pre-period assembly or a split fold's `cutoff` for fold-specific block construction.
@@ -293,20 +299,20 @@ The outcome is returned separately even when it is omitted from matching predict
 - `Y1` and `Y0` remain in the supplied outcome column's units. To match on a scaled outcome while reporting an original-unit outcome, supply separate columns, for example `outcome = "sales"` and `predictors = c("sales_scaled", "income_scaled")`.
 - Externally learned transformations must respect each validation training cutoff. Selecting a prefix here cannot repair leakage from full-period preprocessing.
 
-## Available function: `panel.scale()`
+## Available function: `tvsc.scale()`
 
 Scale matching predictors in raw block objects while preserving outcomes and block identity metadata. The function transforms `X1` and `X0` only. It leaves `Y1`, `Y0`, schema, dates, dimensions, donor order, predictor names and raw-block diagnostics unchanged.
 
-`panel.scale()` accepts raw schema-version-1 `tvsc_blocks` objects and returns a new object with class `c("tvsc_scaled_blocks", "tvsc_blocks")`. Repeated package processing is rejected, including a second call after `scaling = "none"`; start again from raw blocks to choose a different method.
+`tvsc.scale()` accepts raw schema-version-1 `tvsc_blocks` objects and returns a new object with class `c("tvsc_scaled_blocks", "tvsc_blocks")`. Repeated package processing is rejected, including a second call after `scaling = "none"`; start again from raw blocks to choose a different method.
 
 ### Loading the scaler
 
 From the repository root:
 
 ```r
-source("R/panel.dataprep.R")
-source("R/panel.blocks.R")
-source("R/panel.scale.R")
+source("R/tvsc.dataprep.R")
+source("R/tvsc.blocks.R")
+source("R/tvsc.scale.R")
 ```
 
 ### Scaling example
@@ -319,16 +325,16 @@ panel <- expand.grid(
 )
 panel$sales <- seq_len(nrow(panel)) * 10
 
-prepared <- panel.dataprep(
+prepared <- tvsc.dataprep(
   panel, "state", "year", "sales", "Target",
   c("DonorB", "DonorA"), 2005, 2000:2004, "sales"
 )
 
-blocks <- panel.blocks(prepared, 2003)
-scaled <- panel.scale(blocks)
-zscored <- panel.scale(blocks, "zscore")
-unchanged <- panel.scale(blocks, "none")
-custom <- panel.scale(blocks, "custom", scales = c(sales = 100))
+blocks <- tvsc.blocks(prepared, 2003)
+scaled <- tvsc.scale(blocks)
+zscored <- tvsc.scale(blocks, "zscore")
+unchanged <- tvsc.scale(blocks, "none")
+custom <- tvsc.scale(blocks, "custom", scales = c(sales = 100))
 
 scaled$recipe$scaling$divisors
 stopifnot(identical(unchanged$X0, blocks$X0), identical(scaled$Y0, blocks$Y0))
@@ -337,12 +343,12 @@ stopifnot(identical(unchanged$X0, blocks$X0), identical(scaled$Y0, blocks$Y0))
 ### Scaling usage
 
 ```r
-panel.scale(blocks, scaling = "sd", scales = NULL)
+tvsc.scale(blocks, scaling = "sd", scales = NULL)
 ```
 
 | Argument | Description |
 | --- | --- |
-| `blocks` | Raw schema-version-1 `tvsc_blocks` object from `panel.blocks()`. |
+| `blocks` | Raw schema-version-1 `tvsc_blocks` object from `tvsc.blocks()`. |
 | `scaling` | Exactly one of `"sd"`, `"zscore"`, `"none"` or `"custom"`. |
 | `scales` | For `"custom"` only, a named plain numeric vector of finite, strictly positive scales covering every predictor exactly once. Must be `NULL` otherwise. |
 
@@ -385,20 +391,87 @@ For `"none"` and `"custom"`, estimated SDs and zero-variation masks are `NULL`, 
 
 Pooled-level variants, MAD, IQR, min-max, maximum-absolute-value and other robust methods are deferred.
 
+## Available function: `tvsc.metrics()`
+
+Construct predetermined predictor metrics in the coordinate system of explicitly scaled blocks. The constructor accepts `tvsc_scaled_blocks` objects, including blocks processed with `tvsc.scale(raw_blocks, "none")` when no transformation is wanted. Raw `tvsc_blocks` objects without an explicit scaling decision are rejected.
+
+The function does not estimate empirical predictor weights, fit donor weights, score folds, tune penalties, predict counterfactuals or calculate treatment effects. It records supplied choices and alignment metadata. Provenance descriptions are stored as unverified declarations.
+
+### Loading the metric constructor
+
+From the repository root:
+
+```r
+source("R/tvsc.dataprep.R")
+source("R/tvsc.blocks.R")
+source("R/tvsc.scale.R")
+source("R/tvsc.metrics.R")
+```
+
+### Metrics example
+
+```r
+panel <- expand.grid(
+  state = c("Target", "DonorA", "DonorB"),
+  year = 2000:2005,
+  stringsAsFactors = FALSE
+)
+panel$sales <- seq_len(nrow(panel)) * 10
+panel$income <- 100 + seq_len(nrow(panel))
+
+prepared <- tvsc.dataprep(
+  panel, "state", "year", "sales", "Target",
+  c("DonorB", "DonorA"), 2005, 2000:2004, c("sales", "income")
+)
+
+blocks <- tvsc.blocks(prepared, 2003)
+scaled <- tvsc.scale(blocks, "none")
+metrics <- tvsc.metrics(scaled)
+custom <- tvsc.metrics(scaled, c(sales = 0.75, income = 0.25))
+
+stopifnot(
+  identical(dim(metrics$weights), c(2L, 4L)),
+  all(colSums(custom$weights) == 1),
+  identical(metrics$scaling, scaled$recipe$scaling)
+)
+```
+
+### Metrics usage
+
+```r
+tvsc.metrics(blocks, predictor_weights = "uniform", tolerance = 1e-8, provenance = NULL)
+```
+
+| Argument | Description |
+| --- | --- |
+| `blocks` | Schema-version-1 `tvsc_scaled_blocks` object. Use `tvsc.scale(raw_blocks, "none")` to make an explicit no-scaling choice. |
+| `predictor_weights` | Exactly `"uniform"`, a named finite real numeric vector, or a named finite real predictor-by-date matrix. |
+| `tolerance` | Absolute column-sum tolerance in `[0, 1)`. Defaults to `1e-8`. Accepted values are not renormalized. |
+| `provenance` | `NULL` or a nonempty character description of the source of supplied weights. This declaration is not verified. |
+
+Uniform weights equal `1/K` at every training date. A supplied vector is aligned by exact predictor name and repeated across dates. A supplied matrix is aligned by exact predictor and date names. Entries must be finite and nonnegative, with positive column sums within tolerance of one. Extra, missing or duplicated names are rejected.
+
+### Metrics output and boundaries
+
+The returned `tvsc_metrics` object contains `schema_version`, `mode`, `schema`, `predictors`, `periods`, `cutoff`, `dimensions`, `weights`, copied `scaling`, `provenance` and `diagnostics`. Modes are `uniform`, `supplied_constant` and `supplied_time_varying`; they describe input shape, not empirical origin. A constant-column matrix keeps matrix mode.
+
+Diagnostics record column sums, maximum unit-sum error, predictors with zero weights throughout, exact column constancy, `normalization_applied = FALSE` and the tolerance used. No predictor or outcome arrays are copied into the metrics object. The constructor checks metadata alignment; it does not authenticate upstream preprocessing or detect calibration leakage. Empirical metric calibration remains a separate future step and must be performed within each validation training prefix.
+
 ## Tests
 
 From the repository root, in an environment with R installed:
 
 ```sh
-Rscript tests/test-panel.dataprep.R
-Rscript tests/test-panel.split.R
-Rscript tests/test-panel.blocks.R
-Rscript --vanilla tests/test-panel.scale.R
+Rscript --vanilla tests/test-tvsc.dataprep.R
+Rscript --vanilla tests/test-tvsc.split.R
+Rscript --vanilla tests/test-tvsc.blocks.R
+Rscript --vanilla tests/test-tvsc.scale.R
+Rscript --vanilla tests/test-tvsc.metrics.R
 ```
 
-The preparation fixtures cover ordering, incomplete or duplicated training panels, invalid identifiers and dates, nonfinite training values, constant predictors, outcome-only predictors, and separation of training from future outcome values. Split fixtures cover the eight-date example, complete-window and stride rules, date spacing, all-unit membership, unchanged input data, value-independent assignments and invalid arguments. Block fixtures cover exact cells, dimensions and names, row-order invariance, cutoff isolation, constant-predictor diagnostics, a single predictor, omitted outcomes, numeric and factor IDs, non-unit period spacing, malformed inputs, pre-scaled input preservation and transformed-outcome passthrough. Scaling fixtures cover hand-calculated SDs and transformations, exact-equality fallbacks, outcome and input preservation, custom-name alignment, K = 1 shapes, method-specific metadata, common-shift matching identities, prefix isolation, split integration, repeated-scaling rejection, underflow, overflow, nonfinite values and malformed inputs including complex-value rejection.
+The preparation fixtures cover ordering, incomplete or duplicated training panels, invalid identifiers and dates, nonfinite training values, constant predictors, outcome-only predictors, and separation of training from future outcome values. Split fixtures cover the eight-date example, complete-window and stride rules, date spacing, all-unit membership, unchanged input data, value-independent assignments and invalid arguments. Block fixtures cover exact cells, dimensions and names, row-order invariance, cutoff isolation, constant-predictor diagnostics, a single predictor, omitted outcomes, numeric and factor IDs, non-unit period spacing, malformed inputs, pre-scaled input preservation and transformed-outcome passthrough. Scaling fixtures cover hand-calculated SDs and transformations, exact-equality fallbacks, outcome and input preservation, custom-name alignment, K = 1 shapes, method-specific metadata, common-shift matching identities, prefix isolation, split integration, repeated-scaling rejection, underflow, overflow, nonfinite values and malformed inputs including complex-value rejection. Metrics fixtures cover uniform, supplied constant and time-varying weights, exact name alignment, tolerance without renormalization, split-prefix domains, explicit no-scaling inputs, metadata-only boundaries and the absent-versus-present-NULL scaling-field distinction.
 
-The tests use only base R. The preparation fixtures print `All raw panel preparation checks passed.` when successful. The split fixtures print `All chronological panel split checks passed.` when successful. The block fixtures print `All raw predictor block checks passed.` when successful. The scaling fixtures print `All panel scaling checks passed.` when successful. The GitHub Actions workflow runs all four test scripts and documented split, block and scaling examples.
+The tests use only base R. The preparation fixtures print `All raw panel preparation checks passed.` when successful. The split fixtures print `All chronological panel split checks passed.` when successful. The block fixtures print `All raw predictor block checks passed.` when successful. The scaling fixtures print `All panel scaling checks passed.` when successful. The metrics fixtures print `All panel metrics checks passed.` when successful. The GitHub Actions workflow runs all five test scripts and documented split, block, scaling and metrics examples.
 
 ## Roadmap
 
@@ -406,16 +479,17 @@ These names describe the intended interface, not currently callable functions:
 
 | Function or component | Intended responsibility | Status |
 | --- | --- | --- |
-| `panel.dataprep()` | Validate and retain the raw selected panel. | Documented source draft with base-R fixtures. |
-| `panel.split()` | Construct expanding-window training/assessment assignments. | Documented source draft with base-R fixtures. |
-| `panel.blocks()` | Assemble contemporaneous, as-supplied predictor and outcome blocks for an explicit cutoff. | Documented source draft with base-R fixtures. |
-| `panel.scale()` | Transform matching blocks only under the documented scaling rule. | Documented source draft with base-R fixtures. |
-| Predictor-weight calibration | Construct predetermined predictor metrics. | Planned; calibration rules remain open. |
+| `tvsc.dataprep()` | Validate and retain the raw selected panel. | Documented source draft with base-R fixtures. |
+| `tvsc.split()` | Construct expanding-window training/assessment assignments. | Documented source draft with base-R fixtures. |
+| `tvsc.blocks()` | Assemble contemporaneous, as-supplied predictor and outcome blocks for an explicit cutoff. | Documented source draft with base-R fixtures. |
+| `tvsc.scale()` | Transform matching blocks only under the documented scaling rule. | Documented source draft with base-R fixtures. |
+| `tvsc.metrics()` | Construct uniform metrics or validate and align supplied metrics. | Documented source draft with base-R fixtures. |
+| Predictor-weight calibration | Estimate empirical predictor metrics. | Planned; calibration rules remain open. |
 | `tvsc.fit()` | Fit simplex donor-weight paths with first- or second-difference regularization. | Planned. |
 | A `predict()` method | Continue fitted donor weights and construct counterfactual outcomes. | Planned. |
 | `tvsc.att()` | Calculate date-specific gaps and average effects over explicit windows. | Planned. |
 
-The next design checkpoint concerns predictor-weight interfaces and calibration. Package structure, release automation and distribution details will follow separately.
+The next design checkpoint concerns empirical predictor-weight calibration. Package structure, release automation and distribution details will follow separately.
 
 ## Reporting problems
 

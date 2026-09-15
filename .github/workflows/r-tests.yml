@@ -17,47 +17,50 @@ jobs:
       - name: Print R version
         run: Rscript --version
 
-      - name: Run panel.dataprep fixtures
-        run: Rscript tests/test-panel.dataprep.R
+      - name: Run tvsc.dataprep fixtures
+        run: Rscript --vanilla tests/test-tvsc.dataprep.R
 
-      - name: Run panel.split fixtures
-        run: Rscript tests/test-panel.split.R
+      - name: Run tvsc.split fixtures
+        run: Rscript --vanilla tests/test-tvsc.split.R
 
-      - name: Run panel.blocks fixtures
-        run: Rscript tests/test-panel.blocks.R
+      - name: Run tvsc.blocks fixtures
+        run: Rscript --vanilla tests/test-tvsc.blocks.R
 
-      - name: Run panel.scale fixtures
-        run: Rscript --vanilla tests/test-panel.scale.R
+      - name: Run tvsc.scale fixtures
+        run: Rscript --vanilla tests/test-tvsc.scale.R
 
-      - name: Run documented panel.split example
+      - name: Run tvsc.metrics fixtures
+        run: Rscript --vanilla tests/test-tvsc.metrics.R
+
+      - name: Run documented tvsc.split example
         run: |
-          Rscript -e '
-          source("R/panel.dataprep.R")
-          source("R/panel.split.R")
+          Rscript --vanilla -e '
+          source("R/tvsc.dataprep.R")
+          source("R/tvsc.split.R")
           panel <- expand.grid(
             state = c("Target", "DonorA", "DonorB"),
             year = 2000:2009,
             stringsAsFactors = FALSE
           )
           panel$sales <- seq_len(nrow(panel)) * 10
-          prepared <- panel.dataprep(
+          prepared <- tvsc.dataprep(
             panel, "state", "year", "sales", "Target", c("DonorB", "DonorA"),
             2008, 2000:2007, "sales"
           )
-          splits <- panel.split(prepared, initial = 4, horizon = 2, step = 1)
+          splits <- tvsc.split(prepared, initial = 4, horizon = 2, step = 1)
           stopifnot(
             identical(splits$folds[[1]]$train_period, 2000:2003),
             identical(splits$folds[[1]]$validation_period, 2004:2005),
             identical(splits$diagnostics$fold_count, 3L)
           )
-          cat("Documented panel.split example passed.\n")
+          cat("Documented tvsc.split example passed.\n")
           '
 
-      - name: Run documented panel.blocks example
+      - name: Run documented tvsc.blocks example
         run: |
-          Rscript -e '
-          source("R/panel.dataprep.R")
-          source("R/panel.blocks.R")
+          Rscript --vanilla -e '
+          source("R/tvsc.dataprep.R")
+          source("R/tvsc.blocks.R")
           panel <- expand.grid(
             state = c("Target", "DonorA", "DonorB"),
             year = 2000:2007,
@@ -65,52 +68,82 @@ jobs:
           )
           panel$sales <- seq_len(nrow(panel)) * 10
           panel$income <- 1000 + seq_len(nrow(panel))
-          prepared <- panel.dataprep(
+          prepared <- tvsc.dataprep(
             panel, "state", "year", "sales", "Target", c("DonorB", "DonorA"),
             2006, 2000:2005, c("income", "sales")
           )
-          blocks <- panel.blocks(prepared, cutoff = 2003)
+          blocks <- tvsc.blocks(prepared, cutoff = 2003)
           stopifnot(
             identical(blocks$periods, 2000:2003),
             identical(blocks$dimensions, list(predictors = 2L, donors = 2L, periods = 4L)),
             identical(blocks$X1[["2000"]], c(income = 1001, sales = 10)),
             identical(dim(blocks$X0[["2000"]]), c(2L, 2L))
           )
-          cat("Documented panel.blocks example passed.\n")
+          cat("Documented tvsc.blocks example passed.\n")
           '
 
-      - name: Run documented panel.scale example
+      - name: Run documented tvsc.scale example
         run: |
           Rscript --vanilla -e '
-          source("R/panel.dataprep.R")
-          source("R/panel.blocks.R")
-          source("R/panel.scale.R")
+          source("R/tvsc.dataprep.R")
+          source("R/tvsc.blocks.R")
+          source("R/tvsc.scale.R")
           panel <- expand.grid(
             state = c("Target", "DonorA", "DonorB"),
             year = 2000:2005,
             stringsAsFactors = FALSE
           )
           panel$sales <- seq_len(nrow(panel)) * 10
-          prepared <- panel.dataprep(
+          prepared <- tvsc.dataprep(
             panel, "state", "year", "sales", "Target",
             c("DonorB", "DonorA"), 2005, 2000:2004, "sales"
           )
-          blocks <- panel.blocks(prepared, 2003)
-          scaled <- panel.scale(blocks)
-          unchanged <- panel.scale(blocks, "none")
+          blocks <- tvsc.blocks(prepared, 2003)
+          scaled <- tvsc.scale(blocks)
+          unchanged <- tvsc.scale(blocks, "none")
           stopifnot(
             inherits(scaled, "tvsc_scaled_blocks"),
             identical(unchanged$X0, blocks$X0),
             identical(scaled$Y0, blocks$Y0),
             identical(dim(scaled$recipe$scaling$divisors), c(1L, 4L))
           )
-          cat("Documented panel.scale example passed.\n")
+          cat("Documented tvsc.scale example passed.\n")
+          '
+
+      - name: Run documented tvsc.metrics example
+        run: |
+          Rscript --vanilla -e '
+          source("R/tvsc.dataprep.R")
+          source("R/tvsc.blocks.R")
+          source("R/tvsc.scale.R")
+          source("R/tvsc.metrics.R")
+          panel <- expand.grid(
+            state = c("Target", "DonorA", "DonorB"),
+            year = 2000:2005,
+            stringsAsFactors = FALSE
+          )
+          panel$sales <- seq_len(nrow(panel)) * 10
+          panel$income <- 100 + seq_len(nrow(panel))
+          prepared <- tvsc.dataprep(
+            panel, "state", "year", "sales", "Target",
+            c("DonorB", "DonorA"), 2005, 2000:2004, c("sales", "income")
+          )
+          blocks <- tvsc.blocks(prepared, 2003)
+          scaled <- tvsc.scale(blocks, "none")
+          metrics <- tvsc.metrics(scaled)
+          custom <- tvsc.metrics(scaled, c(sales = 0.75, income = 0.25))
+          stopifnot(
+            identical(dim(metrics$weights), c(2L, 4L)),
+            all(colSums(custom$weights) == 1),
+            identical(metrics$scaling, scaled$recipe$scaling)
+          )
+          cat("Documented tvsc.metrics example passed.\n")
           '
 
       - name: Record session info
         run: |
           mkdir -p validation
-          Rscript -e 'writeLines(capture.output(sessionInfo()), "validation/session-info.txt")'
+          Rscript --vanilla -e 'writeLines(capture.output(sessionInfo()), "validation/session-info.txt")'
 
       - name: Upload validation session info
         uses: actions/upload-artifact@v4
