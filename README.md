@@ -2,16 +2,18 @@
 
 R functions in development for preparing panel data and supporting a chronological synthetic-control workflow.
 
-The project accompanies two manuscripts: a methodological paper on temporally regularized synthetic control and a companion paper on the R workflow. Current source drafts cover **raw panel-data preparation, chronological split construction and cutoff-specific raw predictor blocks**; scaling, estimation and treatment-effect functions are planned.
+The project accompanies two manuscripts: a methodological paper on temporally regularized synthetic control and a companion paper on the R workflow. Current source drafts cover **raw panel-data preparation, chronological split construction, cutoff-specific raw predictor blocks and predictor scaling**; calibration, estimation and treatment-effect functions are planned.
 
 ## Development status
 
 - `panel.dataprep()` is available as an initial source-code draft.
 - `panel.split()` is available as an initial source-code draft.
 - `panel.blocks()` is available as an initial source-code draft.
+- `panel.scale()` is available as an initial source-code draft.
 - Base-R test fixtures are provided in `tests/test-panel.dataprep.R`.
 - Base-R split fixtures are provided in `tests/test-panel.split.R`.
 - Base-R block fixtures are provided in `tests/test-panel.blocks.R`.
+- Base-R scaling fixtures are provided in `tests/test-panel.scale.R`.
 - This repository is not yet an installable R package or a validated software release.
 - No empirical results are supplied by this implementation.
 
@@ -291,6 +293,98 @@ The outcome is returned separately even when it is omitted from matching predict
 - `Y1` and `Y0` remain in the supplied outcome column's units. To match on a scaled outcome while reporting an original-unit outcome, supply separate columns, for example `outcome = "sales"` and `predictors = c("sales_scaled", "income_scaled")`.
 - Externally learned transformations must respect each validation training cutoff. Selecting a prefix here cannot repair leakage from full-period preprocessing.
 
+## Available function: `panel.scale()`
+
+Scale matching predictors in raw block objects while preserving outcomes and block identity metadata. The function transforms `X1` and `X0` only. It leaves `Y1`, `Y0`, schema, dates, dimensions, donor order, predictor names and raw-block diagnostics unchanged.
+
+`panel.scale()` accepts raw schema-version-1 `tvsc_blocks` objects and returns a new object with class `c("tvsc_scaled_blocks", "tvsc_blocks")`. Repeated package processing is rejected, including a second call after `scaling = "none"`; start again from raw blocks to choose a different method.
+
+### Loading the scaler
+
+From the repository root:
+
+```r
+source("R/panel.dataprep.R")
+source("R/panel.blocks.R")
+source("R/panel.scale.R")
+```
+
+### Scaling example
+
+```r
+panel <- expand.grid(
+  state = c("Target", "DonorA", "DonorB"),
+  year = 2000:2005,
+  stringsAsFactors = FALSE
+)
+panel$sales <- seq_len(nrow(panel)) * 10
+
+prepared <- panel.dataprep(
+  panel, "state", "year", "sales", "Target",
+  c("DonorB", "DonorA"), 2005, 2000:2004, "sales"
+)
+
+blocks <- panel.blocks(prepared, 2003)
+scaled <- panel.scale(blocks)
+zscored <- panel.scale(blocks, "zscore")
+unchanged <- panel.scale(blocks, "none")
+custom <- panel.scale(blocks, "custom", scales = c(sales = 100))
+
+scaled$recipe$scaling$divisors
+stopifnot(identical(unchanged$X0, blocks$X0), identical(scaled$Y0, blocks$Y0))
+```
+
+### Scaling usage
+
+```r
+panel.scale(blocks, scaling = "sd", scales = NULL)
+```
+
+| Argument | Description |
+| --- | --- |
+| `blocks` | Raw schema-version-1 `tvsc_blocks` object from `panel.blocks()`. |
+| `scaling` | Exactly one of `"sd"`, `"zscore"`, `"none"` or `"custom"`. |
+| `scales` | For `"custom"` only, a named plain numeric vector of finite, strictly positive scales covering every predictor exactly once. Must be `NULL` otherwise. |
+
+Short method names have panel-specific meanings:
+
+| Method | Definition |
+| --- | --- |
+| `"sd"` | Default. At each training date, calculate each predictor's sample variance across target and donors, average those variances across dates, take the square root and divide all dates by that one scale per predictor. Do not center. |
+| `"zscore"` | At each training date, subtract that predictor's cross-sectional mean and divide by that date's cross-sectional sample SD. |
+| `"none"` | Preserve supplied predictor arrays exactly, record zero centers and unit divisors. |
+| `"custom"` | Divide without centering by researcher-supplied positive scales, aligned by predictor name. |
+
+With J donors, each within-date cross-section contains J + 1 units and uses the sample-variance denominator J. `"sd"` is not pooled-level standardization; `"zscore"` uses date-specific divisors.
+
+### Scaling metadata
+
+`recipe$scaling` records:
+
+- schema version, method and formula identifier;
+- reference units, training periods and cutoff;
+- applied centers and divisors as predictor-by-date matrices;
+- estimated within-date SDs where applicable;
+- zero-variation and zero-scale fallback masks;
+- zero-scale policy;
+- diagnostics including minimum positive applied divisor, fallback-cell count and clipping status.
+
+For `"none"` and `"custom"`, estimated SDs and zero-variation masks are `NULL`, and the reference mode is `"not_estimated"`. Original block diagnostics remain raw-input diagnostics; they are not relabeled as transformed-data diagnostics.
+
+### Scaling boundaries
+
+- No outcomes are transformed.
+- No predictor-weight calibration, donor fitting, tuning, prediction or treatment-effect calculation is performed.
+- For `"sd"`, divisor 1 is used only when every training date has exactly identical values across all reference units for that predictor. The common value may still vary over time.
+- For `"zscore"`, an equal-valued date uses its exact common value as center and divisor 1, producing zeros.
+- A zero or nonfinite computed SD for unequal values is a numerical error.
+- Positive scales are not clipped, floored or renormalized.
+- Nonfinite transformed predictor values are rejected.
+- Learned transformations use only the supplied training-prefix blocks and must be rebuilt within each validation prefix.
+- Scaling does not certify good solver conditioning, statistical consistency or absence of upstream preprocessing leakage.
+
+Pooled-level variants, MAD, IQR, min-max, maximum-absolute-value and other robust methods are deferred.
+
 ## Tests
 
 From the repository root, in an environment with R installed:
@@ -299,11 +393,12 @@ From the repository root, in an environment with R installed:
 Rscript tests/test-panel.dataprep.R
 Rscript tests/test-panel.split.R
 Rscript tests/test-panel.blocks.R
+Rscript --vanilla tests/test-panel.scale.R
 ```
 
-The preparation fixtures cover ordering, incomplete or duplicated training panels, invalid identifiers and dates, nonfinite training values, constant predictors, outcome-only predictors, and separation of training from future outcome values. Split fixtures cover the eight-date example, complete-window and stride rules, date spacing, all-unit membership, unchanged input data, value-independent assignments and invalid arguments. Block fixtures cover exact cells, dimensions and names, row-order invariance, cutoff isolation, constant-predictor diagnostics, a single predictor, omitted outcomes, numeric and factor IDs, non-unit period spacing, malformed inputs, pre-scaled input preservation and transformed-outcome passthrough.
+The preparation fixtures cover ordering, incomplete or duplicated training panels, invalid identifiers and dates, nonfinite training values, constant predictors, outcome-only predictors, and separation of training from future outcome values. Split fixtures cover the eight-date example, complete-window and stride rules, date spacing, all-unit membership, unchanged input data, value-independent assignments and invalid arguments. Block fixtures cover exact cells, dimensions and names, row-order invariance, cutoff isolation, constant-predictor diagnostics, a single predictor, omitted outcomes, numeric and factor IDs, non-unit period spacing, malformed inputs, pre-scaled input preservation and transformed-outcome passthrough. Scaling fixtures cover hand-calculated SDs and transformations, exact-equality fallbacks, outcome and input preservation, custom-name alignment, K = 1 shapes, method-specific metadata, common-shift matching identities, prefix isolation, split integration, repeated-scaling rejection, underflow, overflow, nonfinite values and malformed inputs including complex-value rejection.
 
-The tests use only base R. The preparation fixtures print `All raw panel preparation checks passed.` when successful. The split fixtures print `All chronological panel split checks passed.` when successful. The block fixtures print `All raw predictor block checks passed.` when successful. The GitHub Actions workflow runs all three test scripts and documented splitter/block examples.
+The tests use only base R. The preparation fixtures print `All raw panel preparation checks passed.` when successful. The split fixtures print `All chronological panel split checks passed.` when successful. The block fixtures print `All raw predictor block checks passed.` when successful. The scaling fixtures print `All panel scaling checks passed.` when successful. The GitHub Actions workflow runs all four test scripts and documented split, block and scaling examples.
 
 ## Roadmap
 
@@ -314,12 +409,13 @@ These names describe the intended interface, not currently callable functions:
 | `panel.dataprep()` | Validate and retain the raw selected panel. | Documented source draft with base-R fixtures. |
 | `panel.split()` | Construct expanding-window training/assessment assignments. | Documented source draft with base-R fixtures. |
 | `panel.blocks()` | Assemble contemporaneous, as-supplied predictor and outcome blocks for an explicit cutoff. | Documented source draft with base-R fixtures. |
-| Scaling and predictor-weight calibration | Apply declared transformations and construct predetermined predictor metrics. | Planned; design choices remain open. |
+| `panel.scale()` | Transform matching blocks only under the documented scaling rule. | Documented source draft with base-R fixtures. |
+| Predictor-weight calibration | Construct predetermined predictor metrics. | Planned; calibration rules remain open. |
 | `tvsc.fit()` | Fit simplex donor-weight paths with first- or second-difference regularization. | Planned. |
 | A `predict()` method | Continue fitted donor weights and construct counterfactual outcomes. | Planned. |
 | `tvsc.att()` | Calculate date-specific gaps and average effects over explicit windows. | Planned. |
 
-The next design checkpoint concerns the scaling interface. Package structure, release automation and distribution details will follow separately.
+The next design checkpoint concerns predictor-weight interfaces and calibration. Package structure, release automation and distribution details will follow separately.
 
 ## Reporting problems
 
