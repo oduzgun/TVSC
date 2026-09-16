@@ -17,20 +17,40 @@ jobs:
       - name: Print R version
         run: Rscript --version
 
-      - name: Run tvsc.dataprep fixtures
+      - name: Run version-2 tvsc.dataprep fixtures
         run: Rscript --vanilla tests/test-tvsc.dataprep.R
 
-      - name: Run tvsc.split fixtures
+      - name: Run version-2 tvsc.split fixtures
         run: Rscript --vanilla tests/test-tvsc.split.R
 
-      - name: Run tvsc.blocks fixtures
-        run: Rscript --vanilla tests/test-tvsc.blocks.R
+      - name: Run tvsc.vmetrics fixtures
+        run: Rscript --vanilla tests/test-tvsc.vmetrics.R
 
-      - name: Run tvsc.scale fixtures
-        run: Rscript --vanilla tests/test-tvsc.scale.R
-
-      - name: Run tvsc.metrics fixtures
-        run: Rscript --vanilla tests/test-tvsc.metrics.R
+      - name: Run documented tvsc.dataprep example
+        run: |
+          Rscript --vanilla -e '
+          source("R/tvsc.dataprep.R")
+          panel <- expand.grid(
+            state = c("Target", "DonorA", "DonorB"),
+            year = 2000:2004,
+            stringsAsFactors = FALSE
+          )
+          panel$sales <- seq_len(nrow(panel)) * 10
+          panel$income <- 1000 + seq_len(nrow(panel))
+          prepared <- tvsc.dataprep(
+            data = panel, unit = "state", time = "year", outcome = "sales",
+            treated = "Target", donors = c("DonorB", "DonorA"),
+            intervention_time = 2003, pre_period = 2000:2002,
+            predictors = c("sales", "income")
+          )
+          stopifnot(
+            identical(prepared$schema_version, 2L),
+            identical(prepared$blocks$schema_version, 2L),
+            identical(prepared$blocks$dimensions, list(predictors = 2L, donors = 2L, periods = 3L)),
+            identical(names(prepared$blocks$X0), as.character(2000:2002))
+          )
+          cat("Documented tvsc.dataprep example passed.\n")
+          '
 
       - name: Run documented tvsc.split example
         run: |
@@ -49,6 +69,7 @@ jobs:
           )
           splits <- tvsc.split(prepared, initial = 4, horizon = 2, step = 1)
           stopifnot(
+            identical(splits$schema_version, 1L),
             identical(splits$folds[[1]]$train_period, 2000:2003),
             identical(splits$folds[[1]]$validation_period, 2004:2005),
             identical(splits$diagnostics$fold_count, 3L)
@@ -56,69 +77,13 @@ jobs:
           cat("Documented tvsc.split example passed.\n")
           '
 
-      - name: Run documented tvsc.blocks example
+      - name: Run documented tvsc.vmetrics example
         run: |
           Rscript --vanilla -e '
           source("R/tvsc.dataprep.R")
-          source("R/tvsc.blocks.R")
+          source("R/tvsc.vmetrics.R")
           panel <- expand.grid(
-            state = c("Target", "DonorA", "DonorB"),
-            year = 2000:2007,
-            stringsAsFactors = FALSE
-          )
-          panel$sales <- seq_len(nrow(panel)) * 10
-          panel$income <- 1000 + seq_len(nrow(panel))
-          prepared <- tvsc.dataprep(
-            panel, "state", "year", "sales", "Target", c("DonorB", "DonorA"),
-            2006, 2000:2005, c("income", "sales")
-          )
-          blocks <- tvsc.blocks(prepared, cutoff = 2003)
-          stopifnot(
-            identical(blocks$periods, 2000:2003),
-            identical(blocks$dimensions, list(predictors = 2L, donors = 2L, periods = 4L)),
-            identical(blocks$X1[["2000"]], c(income = 1001, sales = 10)),
-            identical(dim(blocks$X0[["2000"]]), c(2L, 2L))
-          )
-          cat("Documented tvsc.blocks example passed.\n")
-          '
-
-      - name: Run documented tvsc.scale example
-        run: |
-          Rscript --vanilla -e '
-          source("R/tvsc.dataprep.R")
-          source("R/tvsc.blocks.R")
-          source("R/tvsc.scale.R")
-          panel <- expand.grid(
-            state = c("Target", "DonorA", "DonorB"),
-            year = 2000:2005,
-            stringsAsFactors = FALSE
-          )
-          panel$sales <- seq_len(nrow(panel)) * 10
-          prepared <- tvsc.dataprep(
-            panel, "state", "year", "sales", "Target",
-            c("DonorB", "DonorA"), 2005, 2000:2004, "sales"
-          )
-          blocks <- tvsc.blocks(prepared, 2003)
-          scaled <- tvsc.scale(blocks)
-          unchanged <- tvsc.scale(blocks, "none")
-          stopifnot(
-            inherits(scaled, "tvsc_scaled_blocks"),
-            identical(unchanged$X0, blocks$X0),
-            identical(scaled$Y0, blocks$Y0),
-            identical(dim(scaled$recipe$scaling$divisors), c(1L, 4L))
-          )
-          cat("Documented tvsc.scale example passed.\n")
-          '
-
-      - name: Run documented tvsc.metrics example
-        run: |
-          Rscript --vanilla -e '
-          source("R/tvsc.dataprep.R")
-          source("R/tvsc.blocks.R")
-          source("R/tvsc.scale.R")
-          source("R/tvsc.metrics.R")
-          panel <- expand.grid(
-            state = c("Target", "DonorA", "DonorB"),
+            state = c("Target", "DonorA", "DonorB", "DonorC"),
             year = 2000:2005,
             stringsAsFactors = FALSE
           )
@@ -126,18 +91,19 @@ jobs:
           panel$income <- 100 + seq_len(nrow(panel))
           prepared <- tvsc.dataprep(
             panel, "state", "year", "sales", "Target",
-            c("DonorB", "DonorA"), 2005, 2000:2004, c("sales", "income")
+            c("DonorC", "DonorB", "DonorA"), 2005, 2000:2004,
+            c("sales", "income")
           )
-          blocks <- tvsc.blocks(prepared, 2003)
-          scaled <- tvsc.scale(blocks, "none")
-          metrics <- tvsc.metrics(scaled)
-          custom <- tvsc.metrics(scaled, c(sales = 0.75, income = 0.25))
+          metrics <- tvsc.vmetrics(prepared, cutoff = 2003, predictor_weights = "uniform", scaling = "none")
+          supplied <- tvsc.vmetrics(prepared, cutoff = 2003, predictor_weights = c(sales = 0.75, income = 0.25), scaling = "none")
           stopifnot(
+            inherits(metrics, "tvsc_vmetrics"),
+            identical(metrics$schema_version, 1L),
+            identical(metrics$blocks$schema_version, 2L),
             identical(dim(metrics$weights), c(2L, 4L)),
-            all(colSums(custom$weights) == 1),
-            identical(metrics$scaling, scaled$recipe$scaling)
+            all(colSums(supplied$weights) == 1)
           )
-          cat("Documented tvsc.metrics example passed.\n")
+          cat("Documented tvsc.vmetrics example passed.\n")
           '
 
       - name: Record session info

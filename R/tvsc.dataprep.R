@@ -32,11 +32,14 @@
 #'
 #' @return A list of class tvsc_prepared containing:
 #'   \describe{
-#'     \item{schema_version}{Object-schema version, currently 1L.}
+#'     \item{schema_version}{Object-schema version, currently 2L.}
 #'     \item{schema}{Column roles, predictors, target and ordered donor IDs,
 #'       intervention_time, pre_period and period_step.}
 #'     \item{training}{Selected identifier, outcome and predictor columns,
 #'       ordered by date, then target first and donors in supplied order.}
+#'     \item{blocks}{Schema-version-2 tvsc_blocks for the full pre-period:
+#'       date-indexed X1 feature vectors and X0 predictor-by-donor matrices,
+#'       Y1 target outcomes, Y0 date-by-donor outcomes, dates and dimensions.}
 #'     \item{future_donors}{Available post-treatment donor unit, time and
 #'       outcome columns, in input row order. May have zero rows.}
 #'     \item{future_target}{Available observed post-treatment target unit,
@@ -59,8 +62,8 @@
 #'   separately; data-dependent preprocessing for chronological validation
 #'   must respect each training cutoff even if performed outside this code.
 #'
-#'   The function does not split, scale, impute, aggregate, construct predictor
-#'   matrices or fit donor weights. Only the declared training dates and
+#'   The function constructs raw contemporaneous blocks, but does not split,
+#'   scale, impute, aggregate or fit donor weights. Only the declared training dates and
 #'   selected post-treatment outcome rows are retained; additional pre-period
 #'   history is not stored for lag construction. Future target outcomes are
 #'   observed treated outcomes, not counterfactuals, and are not required.
@@ -80,9 +83,15 @@
 #'   predictors = c("sales", "income")
 #' )
 #' prepared$training
+#' prepared$blocks$X0[[1]]
 #' prepared$diagnostics
 #'
-#' @note Initial implementation using base R only.
+#' @note Version-2 preparation integrates raw blocks using base R only.
+#'   Its revised fixtures and example have not been executed in R here.
+#'   Earlier reports concern version 1: a user-supplied R console
+#'   transcript dated September 15, 2026 reports the raw-preparation checks
+#'   passing. The R version and sourced-file revision were not supplied;
+#'   independent local execution and the separate example remain pending.
 tvsc.dataprep <- function(data, unit, time, outcome, treated, donors,
                            intervention_time, pre_period, predictors,
                            period_step = 1) {
@@ -197,9 +206,9 @@ tvsc.dataprep <- function(data, unit, time, outcome, treated, donors,
   constant_predictors <- predictors[vapply(predictors, function(column) {
     length(unique(training[[column]])) == 1L
   }, logical(1))]
-  # Return the raw panel and metadata, not fitted weights or predictor matrices.
-  structure(list(
-    schema_version = 1L,
+  # Return the raw panel, aligned blocks and metadata, not fitted weights.
+  prepared <- structure(list(
+    schema_version = 2L,
     schema = list(unit = unit, time = time, outcome = outcome,
                   predictors = predictors, treated = target_id, donors = donor_ids,
                   intervention_time = intervention_time, pre_period = pre_period,
@@ -214,4 +223,47 @@ tvsc.dataprep <- function(data, unit, time, outcome, treated, donors,
                        constant_predictors = constant_predictors,
                        future_outcomes_validated = FALSE)
   ), class = "tvsc_prepared")
+  prepared$blocks <- .tvsc_raw_blocks(training, prepared$schema,
+                                     prepared$recipe, constant_predictors)
+  prepared
+}
+
+.tvsc_raw_blocks <- function(training, schema, recipe, constant_predictors) {
+  periods <- schema$pre_period
+  predictor_names <- unname(schema$predictors)
+  donor_names <- as.character(schema$donors)
+  date_names <- as.character(periods)
+  donor_count <- length(donor_names)
+  target_rows <- (seq_along(periods) - 1L) * (donor_count + 1L) + 1L
+  X1 <- lapply(target_rows, function(target_row) {
+    vapply(predictor_names, function(predictor) {
+      training[[predictor]][target_row]
+    }, numeric(1))
+  })
+  X0 <- lapply(target_rows, function(target_row) {
+    donor_rows <- target_row + seq_len(donor_count)
+    block <- t(as.matrix(training[donor_rows, predictor_names, drop = FALSE]))
+    storage.mode(block) <- "double"
+    dimnames(block) <- list(predictor_names, donor_names)
+    block
+  })
+  names(X1) <- date_names
+  names(X0) <- date_names
+  Y1 <- as.numeric(training[[schema$outcome]][target_rows])
+  names(Y1) <- date_names
+  donor_rows <- unlist(lapply(target_rows, function(target_row) {
+    target_row + seq_len(donor_count)
+  }), use.names = FALSE)
+  Y0 <- matrix(as.numeric(training[[schema$outcome]][donor_rows]),
+               nrow = length(periods), ncol = donor_count, byrow = TRUE,
+               dimnames = list(date_names, donor_names))
+  structure(list(
+    schema_version = 2L, schema = schema, periods = periods,
+    cutoff = periods[length(periods)],
+    dimensions = list(predictors = length(predictor_names),
+                      donors = donor_count, periods = length(periods)),
+    X1 = X1, X0 = X0, Y1 = Y1, Y0 = Y0, recipe = recipe,
+    diagnostics = list(training_rows = nrow(training),
+                       constant_predictors = constant_predictors)
+  ), class = "tvsc_blocks")
 }

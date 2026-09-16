@@ -90,8 +90,11 @@ expect_error(tvsc.split(short, 3, 1), "No full fold fits")
 # Reject unsupported object versions and invalid date metadata.
 expect_error(tvsc.split(list(), 4, 2), "tvsc_prepared")
 invalid <- prepared
-invalid$schema_version <- 2L
-expect_error(tvsc.split(invalid, 4, 2), "schema-version-1")
+invalid$schema_version <- 1L
+expect_error(tvsc.split(invalid, 4, 2), "schema-version-2")
+expect_error(tvsc.split(invalid, 4, 2), "original panel")
+invalid$schema_version <- 3L
+expect_error(tvsc.split(invalid, 4, 2), "schema-version-2")
 invalid <- prepared
 invalid$schema$donors <- NULL
 expect_error(tvsc.split(invalid, 4, 2), "incomplete or ambiguous schema")
@@ -108,4 +111,56 @@ invalid <- prepared
 invalid$schema$period_step <- 0
 expect_error(tvsc.split(invalid, 4, 2), "regular pre-treatment dates")
 
-cat("All chronological panel split checks passed.\n")
+stopifnot(identical(prepared$schema_version, 2L),
+          identical(splits$schema_version, 1L))
+invalid <- prepared
+invalid$blocks <- NULL
+expect_error(tvsc.split(invalid, 4, 2), "version-2 training structure")
+invalid <- prepared
+invalid$blocks$schema_version <- 1L
+expect_error(tvsc.split(invalid, 4, 2), "incompatible raw blocks")
+invalid <- prepared
+invalid$blocks$periods <- rev(invalid$blocks$periods)
+expect_error(tvsc.split(invalid, 4, 2), "incompatible raw blocks")
+invalid <- prepared
+invalid$blocks$schema$donors <- rev(invalid$blocks$schema$donors)
+expect_error(tvsc.split(invalid, 4, 2), "incompatible raw blocks")
+invalid <- prepared
+invalid$blocks$X0[[1]] <- invalid$blocks$X0[[1]][, 2:1, drop = FALSE]
+expect_error(tvsc.split(invalid, 4, 2), "dimensions or ordering")
+invalid <- prepared
+invalid$blocks$X1[[1]] <- unname(invalid$blocks$X1[[1]])
+expect_error(tvsc.split(invalid, 4, 2), "dimensions or ordering")
+invalid <- prepared
+invalid$blocks$X0[[1]] <- drop(invalid$blocks$X0[[1]])
+expect_error(tvsc.split(invalid, 4, 2), "dimensions or ordering")
+invalid <- prepared
+invalid$blocks$Y0 <- invalid$blocks$Y0[, 2:1, drop = FALSE]
+expect_error(tvsc.split(invalid, 4, 2), "incompatible raw blocks")
+invalid <- prepared
+invalid$blocks$dimensions$predictors <- 2L
+expect_error(tvsc.split(invalid, 4, 2), "incompatible raw blocks")
+invalid <- prepared
+invalid$recipe$scaling <- list(method = "none")
+expect_error(tvsc.split(invalid, 4, 2), "raw recipe")
+invalid <- prepared
+invalid$schema$donors <- c("DonorA", "DonorA")
+expect_error(tvsc.split(invalid, 4, 2), "target/donor metadata")
+invalid <- prepared
+invalid$training <- invalid$training[-1, ]
+expect_error(tvsc.split(invalid, 4, 2), "training structure")
+values_ignored <- prepared
+values_ignored$training$sales[] <- NA_real_
+values_ignored$blocks$X1 <- lapply(values_ignored$blocks$X1, function(block) {
+  block[] <- NA_real_
+  block
+})
+values_ignored$blocks$X0 <- lapply(values_ignored$blocks$X0, function(block) {
+  block[] <- Inf
+  block
+})
+values_ignored$blocks$Y1[] <- NaN
+values_ignored$blocks$Y0[] <- NA_real_
+values_ignored$future_target$sales[] <- NA_real_
+stopifnot(identical(splits, tvsc.split(values_ignored, 4, 2)))
+cat("All chronological split checks for version-2 preparation passed.\n")
