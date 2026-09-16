@@ -23,6 +23,9 @@ jobs:
       - name: Run panel.split fixtures
         run: Rscript tests/test-panel.split.R
 
+      - name: Run panel.blocks fixtures
+        run: Rscript tests/test-panel.blocks.R
+
       - name: Run documented panel.split example
         run: |
           Rscript -e '
@@ -45,6 +48,32 @@ jobs:
             identical(splits$diagnostics$fold_count, 3L)
           )
           cat("Documented panel.split example passed.\n")
+          '
+
+      - name: Run documented panel.blocks example
+        run: |
+          Rscript -e '
+          source("R/panel.dataprep.R")
+          source("R/panel.blocks.R")
+          panel <- expand.grid(
+            state = c("Target", "DonorA", "DonorB"),
+            year = 2000:2007,
+            stringsAsFactors = FALSE
+          )
+          panel$sales <- seq_len(nrow(panel)) * 10
+          panel$income <- 1000 + seq_len(nrow(panel))
+          prepared <- panel.dataprep(
+            panel, "state", "year", "sales", "Target", c("DonorB", "DonorA"),
+            2006, 2000:2005, c("income", "sales")
+          )
+          blocks <- panel.blocks(prepared, cutoff = 2003)
+          stopifnot(
+            identical(blocks$periods, 2000:2003),
+            identical(blocks$dimensions, list(predictors = 2L, donors = 2L, periods = 4L)),
+            identical(blocks$X1[["2000"]], c(income = 1001, sales = 10)),
+            identical(dim(blocks$X0[["2000"]]), c(2L, 2L))
+          )
+          cat("Documented panel.blocks example passed.\n")
           '
 
       - name: Record session info

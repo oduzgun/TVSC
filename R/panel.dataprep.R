@@ -2,7 +2,7 @@
 #'
 #' Select and validate an explicitly declared pre-treatment panel for one target
 #' unit and at least two donors. The function keeps measurements in their
-#' original units, orders the training panel by period and declared unit order,
+#' supplied units, orders the training panel by period and declared unit order,
 #' and stores available post-treatment donor and observed target outcomes in
 #' separate tables.
 #'
