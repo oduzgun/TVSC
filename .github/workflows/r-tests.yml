@@ -17,5 +17,43 @@ jobs:
       - name: Print R version
         run: Rscript --version
 
-      - name: Run base-R fixtures
+      - name: Run panel.dataprep fixtures
         run: Rscript tests/test-panel.dataprep.R
+
+      - name: Run panel.split fixtures
+        run: Rscript tests/test-panel.split.R
+
+      - name: Run documented panel.split example
+        run: |
+          Rscript -e '
+          source("R/panel.dataprep.R")
+          source("R/panel.split.R")
+          panel <- expand.grid(
+            state = c("Target", "DonorA", "DonorB"),
+            year = 2000:2009,
+            stringsAsFactors = FALSE
+          )
+          panel$sales <- seq_len(nrow(panel)) * 10
+          prepared <- panel.dataprep(
+            panel, "state", "year", "sales", "Target", c("DonorB", "DonorA"),
+            2008, 2000:2007, "sales"
+          )
+          splits <- panel.split(prepared, initial = 4, horizon = 2, step = 1)
+          stopifnot(
+            identical(splits$folds[[1]]$train_period, 2000:2003),
+            identical(splits$folds[[1]]$validation_period, 2004:2005),
+            identical(splits$diagnostics$fold_count, 3L)
+          )
+          cat("Documented panel.split example passed.\n")
+          '
+
+      - name: Record session info
+        run: |
+          mkdir -p validation
+          Rscript -e 'writeLines(capture.output(sessionInfo()), "validation/session-info.txt")'
+
+      - name: Upload validation session info
+        uses: actions/upload-artifact@v4
+        with:
+          name: r-validation-session-info
+          path: validation/session-info.txt

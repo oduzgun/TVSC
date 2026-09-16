@@ -2,12 +2,14 @@
 
 R functions in development for preparing panel data and supporting a chronological synthetic-control workflow.
 
-The project accompanies two manuscripts: a methodological paper on temporally regularized synthetic control and a companion paper on the R workflow. The current implementation covers **raw panel-data preparation only**; estimation and treatment-effect functions are planned.
+The project accompanies two manuscripts: a methodological paper on temporally regularized synthetic control and a companion paper on the R workflow. Current source drafts cover **raw panel-data preparation and chronological split construction**; estimation and treatment-effect functions are planned.
 
 ## Development status
 
 - `panel.dataprep()` is available as an initial source-code draft.
+- `panel.split()` is available as an initial source-code draft.
 - Base-R test fixtures are provided in `tests/test-panel.dataprep.R`.
+- Base-R split fixtures are provided in `tests/test-panel.split.R`.
 - This repository is not yet an installable R package or a validated software release.
 - No empirical results are supplied by this implementation.
 
@@ -117,9 +119,94 @@ A list of class `tvsc_prepared` with the following components:
 
 ### Why splitting is separate
 
-Data preparation describes the panel; validation splitting describes an analysis design. A separate, planned `panel.split()` function will create chronological training and assessment assignments from the prepared object.
+Data preparation describes the panel; validation splitting describes an analysis design. The separate `panel.split()` draft creates chronological training and assessment assignments from the prepared object.
 
 The intended workflow permits fitting on the full declared pre-period when tuning choices are supplied. When chronological validation is used, any data-dependent transformations and calibration must instead be learned within the corresponding training prefix—not from the full pre-period before splitting. Those later steps are not implemented here.
+
+## Available function: `panel.split()`
+
+Construct expanding-window chronological splits from a prepared panel. Training and validation assignments are dates, not individual panel rows: all selected units belong to the same window at each assigned date.
+
+The function uses schema metadata from a schema-version-1 `tvsc_prepared` object. It does not modify the prepared object, revalidate the raw panel, transform values, fit weights, choose tuning parameters, score folds or reserve an independent test set.
+
+### Loading the splitter
+
+From the repository root:
+
+```r
+source("R/panel.dataprep.R")
+source("R/panel.split.R")
+```
+
+### Split example
+
+```r
+panel <- expand.grid(
+  state = c("Target", "DonorA", "DonorB"),
+  year = 2000:2009,
+  stringsAsFactors = FALSE
+)
+panel$sales <- seq_len(nrow(panel)) * 10
+
+prepared <- panel.dataprep(
+  panel, "state", "year", "sales", "Target", c("DonorB", "DonorA"),
+  2008, 2000:2007, "sales"
+)
+
+splits <- panel.split(prepared, initial = 4, horizon = 2, step = 1)
+splits$folds[[1]]
+splits$diagnostics
+```
+
+With eight declared pre-treatment dates, `initial = 4`, `horizon = 2` and `step = 1` create three complete folds:
+
+| Fold | Training dates | Validation dates |
+| --- | --- | --- |
+| 1 | 2000-2003 | 2004-2005 |
+| 2 | 2000-2004 | 2005-2006 |
+| 3 | 2000-2005 | 2006-2007 |
+
+Validation dates may repeat across folds, and earlier validation dates may become training dates in later folds. This is intentional; folds are chronological assessment assignments, not independent samples.
+
+### Split usage
+
+```r
+panel.split(prepared, initial, horizon, step = 1)
+```
+
+| Argument | Description |
+| --- | --- |
+| `prepared` | Unmodified schema-version-1 `tvsc_prepared` object produced by `panel.dataprep()`. |
+| `initial` | Required number of dates in the first training window; must be at least three. |
+| `horizon` | Required positive number of subsequent validation dates per fold. |
+| `step` | Positive number of dates by which the cutoff advances; defaults to `1`. |
+
+`initial`, `horizon` and `step` count dates in `schema$pre_period`, not long-panel rows and not numeric calendar-index units. For example, with biennial period indices, `horizon = 2` means two declared dates, not two calendar years.
+
+### Returned split object
+
+A list of class `tvsc_splits` with the following components:
+
+| Component | Contents |
+| --- | --- |
+| `schema_version` | Split-object schema version, currently `1L`. |
+| `schema` | Copy of the prepared panel schema. This is compatibility metadata, not a checksum of the underlying data. |
+| `specification` | Window type, `initial`, `horizon`, `step` and `full_windows_only = TRUE`. |
+| `folds` | Ordered list of folds. Each fold contains `id`, `train_index`, `validation_index`, `train_period`, `cutoff`, `validation_period` and `horizons`. |
+| `diagnostics` | `fold_count`, date-named `assessment_counts` and `unassessed_period`. |
+
+`train_index` and `validation_index` refer to positions in `schema$pre_period`, not data-frame row numbers. `unassessed_period` includes initial training-only dates and any dates omitted by the stride or complete-window policy.
+
+### Split boundaries
+
+- Every training window starts at the first declared pre-treatment date and expands as the cutoff advances.
+- Validation immediately follows the cutoff.
+- Only complete validation windows on the requested stride are returned.
+- The final validation window is not shortened, and no extra off-stride cutoff is added.
+- An error is raised if no complete fold fits.
+- Training and validation are disjoint within a fold.
+- Repeated assessment dates across folds are retained and reported through `assessment_counts`.
+- Downstream fitting must still check schema compatibility and estimate any data-dependent transformations within each training prefix.
 
 ## Tests
 
@@ -127,11 +214,12 @@ From the repository root, in an environment with R installed:
 
 ```sh
 Rscript tests/test-panel.dataprep.R
+Rscript tests/test-panel.split.R
 ```
 
-The fixtures cover ordering, incomplete or duplicated training panels, invalid identifiers and dates, nonfinite training values, constant predictors, outcome-only predictors, and separation of training from future outcome values.
+The preparation fixtures cover ordering, incomplete or duplicated training panels, invalid identifiers and dates, nonfinite training values, constant predictors, outcome-only predictors, and separation of training from future outcome values. Split fixtures cover the eight-date example, complete-window and stride rules, date spacing, all-unit membership, unchanged input data, value-independent assignments and invalid arguments.
 
-The tests use only base R and print `All raw panel preparation checks passed.` when successful. No passing-test claim is made until that command or the GitHub Actions workflow succeeds.
+The tests use only base R. The preparation fixtures print `All raw panel preparation checks passed.` when successful. The split fixtures print `All chronological panel split checks passed.` when successful. The GitHub Actions workflow runs both test scripts and a documented splitter example.
 
 ## Roadmap
 
@@ -139,14 +227,14 @@ These names describe the intended interface, not currently callable functions:
 
 | Function or component | Intended responsibility | Status |
 | --- | --- | --- |
-| `panel.dataprep()` | Validate and retain the raw selected panel. | Draft written; R execution pending. |
-| `panel.split()` | Construct chronological training/assessment assignments. | Planned. |
+| `panel.dataprep()` | Validate and retain the raw selected panel. | Documented source draft with base-R fixtures. |
+| `panel.split()` | Construct expanding-window training/assessment assignments. | Documented source draft with base-R fixtures. |
 | Predictor-block construction and calibration | Build fitting inputs under explicit, cutoff-aware transformation and predictor-weight rules. | Planned; design choices remain open. |
 | `tvsc.fit()` | Fit simplex donor-weight paths with first- or second-difference regularization. | Planned. |
 | A `predict()` method | Continue fitted donor weights and construct counterfactual outcomes. | Planned. |
 | `tvsc.att()` | Calculate date-specific gaps and average effects over explicit windows. | Planned. |
 
-The next implementation checkpoint is to execute and review the raw-preparation tests before extending the interface. Package structure, release automation and distribution details will follow separately.
+The next design checkpoint concerns predictor-block construction and the economic scaling convention. Package structure, release automation and distribution details will follow separately.
 
 ## Reporting problems
 
