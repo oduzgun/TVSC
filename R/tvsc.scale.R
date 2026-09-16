@@ -4,7 +4,7 @@
 #' input object. Short method names have panel-specific meanings: sd uses one
 #' RMS within-date SD per predictor; zscore uses each date's own mean and SD.
 #'
-#' @param blocks A raw schema-version-1 tvsc_blocks object from panel.blocks().
+#' @param blocks A raw schema-version-1 tvsc_blocks object from tvsc.blocks().
 #'   Its contemporaneous recipe must record scaling = NULL. Externally
 #'   transformed values are allowed, but their provenance is not verified.
 #' @param scaling One of "sd" (default), "zscore", "none" or "custom".
@@ -40,7 +40,7 @@
 #'
 #'   none records zero centers and unit divisors without arithmetic on X1/X0.
 #'   custom divides by the supplied scales without centering. All methods,
-#'   including none, mark the output as processed: a second panel.scale()
+#'   including none, mark the output as processed: a second tvsc.scale()
 #'   call is rejected. Start from raw blocks to choose a different method.
 #'   This guard does not detect undisclosed upstream transformations.
 #'
@@ -55,16 +55,16 @@
 #' panel <- expand.grid(state = c("Target", "DonorA", "DonorB"),
 #'                      year = 2000:2005, stringsAsFactors = FALSE)
 #' panel$sales <- seq_len(nrow(panel)) * 10
-#' prepared <- panel.dataprep(panel, "state", "year", "sales", "Target",
+#' prepared <- tvsc.dataprep(panel, "state", "year", "sales", "Target",
 #'                            c("DonorB", "DonorA"), 2005, 2000:2004, "sales")
-#' blocks <- panel.blocks(prepared, 2003)
-#' scaled <- panel.scale(blocks)
+#' blocks <- tvsc.blocks(prepared, 2003)
+#' scaled <- tvsc.scale(blocks)
 #' scaled$recipe$scaling$divisors
-#' unchanged <- panel.scale(blocks, "none")
+#' unchanged <- tvsc.scale(blocks, "none")
 #' stopifnot(identical(unchanged$X0, blocks$X0), identical(scaled$Y0, blocks$Y0))
 #'
 #' @note Initial base-R implementation.
-panel.scale <- function(blocks, scaling = "sd", scales = NULL) {
+tvsc.scale <- function(blocks, scaling = "sd", scales = NULL) {
   fail <- function(message) stop(message, call. = FALSE)
   has_fields <- function(value, required) {
     is.list(value) && !is.data.frame(value) && !is.null(names(value)) &&

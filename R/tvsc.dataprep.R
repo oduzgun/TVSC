@@ -1,32 +1,32 @@
 #' Prepare raw panel data for temporally regularized synthetic control.
 #'
-#' Select and validate an explicitly declared pre-treatment panel for one target
-#' unit and at least two donors. The function keeps measurements in their
-#' supplied units, orders the training panel by period and declared unit order,
-#' and stores available post-treatment donor and observed target outcomes in
-#' separate tables.
+#' Select and validate an explicitly declared pre-treatment panel for one
+#' target and at least two donors. Keep measurement values as supplied,
+#' order training observations consistently, and retain available post-treatment
+#' donor and observed target outcomes in separate tables.
 #'
-#' @param data Nonempty data frame with unique, nonempty column names.
+#' @param data A nonempty data frame with unique, nonempty column names.
+#'   Predictors may already be transformed; no additional scaling is applied.
+#'   Supply the outcome column in the units intended for prediction/reporting.
 #' @param unit One character string naming the unit-ID column. IDs must be
-#'   nonmissing character values or finite plain numeric values. Factor IDs are
-#'   matched through their character labels; empty character IDs are rejected.
+#'   nonmissing character or finite plain numeric values. Factor IDs are
+#'   matched using their character labels; empty character IDs are rejected.
 #' @param time One character string naming a finite, integer-valued numeric
-#'   period-index column. Calendar Date and date-time objects are not supported.
+#'   period-index column. Date and date-time objects are not supported.
 #' @param outcome One character string naming the outcome column. Required
-#'   training values must be plain numeric and finite, even if the outcome is
-#'   not listed in predictors. Unit, time and outcome columns must differ.
-#' @param treated One target-unit ID matching the character/numeric type of the
-#'   unit column after factor IDs have been converted to character labels.
-#' @param donors Vector of at least two distinct donor IDs, excluding the target
-#'   and matching the character/numeric type of the unit column. Supplied order
+#'   training values must be plain numeric and finite, even when the outcome
+#'   is not included in predictors. Unit, time and outcome columns must differ.
+#' @param treated One target ID matching the character/numeric type of unit.
+#' @param donors A vector of at least two distinct donor IDs, excluding the
+#'   target and matching the character/numeric type of unit. Supplied order
 #'   determines donor order in the schema and within each training date.
 #' @param intervention_time One integer-valued numeric index identifying the
-#'   first treated period, not the final pre-treatment period.
-#' @param pre_period Explicit numeric vector of at least three increasing dates,
-#'   spaced by period_step and strictly before intervention_time.
-#' @param predictors Nonempty character vector of unique predictor-column names.
-#'   May include outcome, but not unit or time. Required training values must be
-#'   plain numeric and finite; encode categorical predictors before calling.
+#'   first treated period, not the last pre-treatment period.
+#' @param pre_period An explicit numeric vector of at least three increasing
+#'   dates, spaced by period_step and strictly before intervention_time.
+#' @param predictors A nonempty character vector of unique predictor-column
+#'   names. May include outcome, but not unit or time. Training values must
+#'   be plain numeric and finite; encode categorical predictors explicitly.
 #' @param period_step One positive integer-valued spacing between successive
 #'   pre_period dates. Defaults to 1.
 #'
@@ -50,9 +50,14 @@
 #' @details Each selected unit must occur exactly once at each pre_period date.
 #'   Missing or duplicate training keys and nonfinite required training values
 #'   cause errors. Constant predictors are retained and flagged, not dropped.
-#'   Unit IDs and time indices are checked across all supplied rows. Future
-#'   outcome values, duplicate future keys and future panel completeness are not
+#'   Unit IDs and time indices are checked across all supplied rows; future
+#'   outcome values, duplicate future keys and future completeness are not
 #'   checked. Future tables require validation before prediction or scoring.
+#'
+#'   Raw means as supplied, not necessarily never transformed. The function
+#'   neither detects nor reverses earlier preprocessing. Keep its provenance
+#'   separately; data-dependent preprocessing for chronological validation
+#'   must respect each training cutoff even if performed outside this code.
 #'
 #'   The function does not split, scale, impute, aggregate, construct predictor
 #'   matrices or fit donor weights. Only the declared training dates and
@@ -68,7 +73,7 @@
 #' )
 #' panel$sales <- seq_len(nrow(panel)) * 10
 #' panel$income <- 1000 + seq_len(nrow(panel))
-#' prepared <- panel.dataprep(
+#' prepared <- tvsc.dataprep(
 #'   data = panel, unit = "state", time = "year", outcome = "sales",
 #'   treated = "Target", donors = c("DonorB", "DonorA"),
 #'   intervention_time = 2003, pre_period = 2000:2002,
@@ -77,8 +82,8 @@
 #' prepared$training
 #' prepared$diagnostics
 #'
-#' @note Initial implementation draft using base R only.
-panel.dataprep <- function(data, unit, time, outcome, treated, donors,
+#' @note Initial implementation using base R only.
+tvsc.dataprep <- function(data, unit, time, outcome, treated, donors,
                            intervention_time, pre_period, predictors,
                            period_step = 1) {
   # Local validators reject ambiguous types instead of silently coercing data.

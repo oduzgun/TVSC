@@ -5,7 +5,7 @@
 #' only; do not change the prepared panel, transform values or fit a model.
 #'
 #' @param prepared An unmodified tvsc_prepared object with schema_version 1L,
-#'   returned by panel.dataprep(). Only schema metadata are used, not outcome
+#'   returned by tvsc.dataprep(). Only schema metadata are used, not outcome
 #'   or predictor values. This function does not revalidate the raw panel.
 #' @param initial Integer-valued number of dates in the first training window,
 #'   at least 3. Required; no automatic window size is chosen.
@@ -52,17 +52,17 @@
 #'   stringsAsFactors = FALSE
 #' )
 #' panel$sales <- seq_len(nrow(panel)) * 10
-#' prepared <- panel.dataprep(
+#' prepared <- tvsc.dataprep(
 #'   panel, "state", "year", "sales", "Target", c("DonorB", "DonorA"),
 #'   2008, 2000:2007, "sales"
 #' )
-#' splits <- panel.split(prepared, initial = 4, horizon = 2)
+#' splits <- tvsc.split(prepared, initial = 4, horizon = 2)
 #' splits$folds[[1]]$train_period
 #' splits$folds[[1]]$validation_period
 #' splits$diagnostics
 #'
 #' @note Initial base-R implementation.
-panel.split <- function(prepared, initial, horizon, step = 1) {
+tvsc.split <- function(prepared, initial, horizon, step = 1) {
   # Check the object contract without reading or transforming panel values.
   fail <- function(message) stop(message, call. = FALSE)
   whole_numeric <- function(value) {
@@ -72,13 +72,13 @@ panel.split <- function(prepared, initial, horizon, step = 1) {
   }
   if (!inherits(prepared, "tvsc_prepared") || !is.list(prepared) ||
       !identical(prepared$schema_version, 1L) || !is.list(prepared$schema)) {
-    fail("prepared must be a schema-version-1 tvsc_prepared object from panel.dataprep().")
+    fail("prepared must be a schema-version-1 tvsc_prepared object from tvsc.dataprep().")
   }
   schema <- prepared$schema
   required <- c("unit", "time", "outcome", "predictors", "treated", "donors",
                 "intervention_time", "pre_period", "period_step")
   if (!all(required %in% names(schema)) || anyDuplicated(names(schema))) {
-    fail("prepared has an incomplete or ambiguous schema; recreate it with panel.dataprep().")
+    fail("prepared has an incomplete or ambiguous schema; recreate it with tvsc.dataprep().")
   }
   periods <- schema$pre_period
   spacing <- schema$period_step

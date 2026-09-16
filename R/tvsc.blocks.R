@@ -5,7 +5,7 @@
 #' Keep predictor order, donor order and measurement values unchanged.
 #' Scaling is a separate operation; no default economic scale is chosen here.
 #'
-#' @param prepared A schema-version-1 tvsc_prepared object from panel.dataprep(),
+#' @param prepared A schema-version-1 tvsc_prepared object from tvsc.dataprep(),
 #'   with as-supplied training values and its contemporaneous recipe recording
 #'   no package scaling. Predictors may have been transformed before preparation.
 #' @param cutoff One finite integer-valued numeric date in schema$pre_period,
@@ -34,7 +34,7 @@
 #'       using only the selected prefix. Constant predictors are retained.}
 #'   }
 #'
-#' @details Requires panel.dataprep() to be loaded. Its validation and ordering
+#' @details Requires tvsc.dataprep() to be loaded. Its validation and ordering
 #'   logic is reused on the selected prefix, rather than trusting stored row
 #'   order or duplicating the raw-panel validation rules.
 #'
@@ -65,17 +65,17 @@
 #' )
 #' panel$sales <- seq_len(nrow(panel)) * 10
 #' panel$income <- 1000 + seq_len(nrow(panel))
-#' prepared <- panel.dataprep(
+#' prepared <- tvsc.dataprep(
 #'   panel, "state", "year", "sales", "Target", c("DonorB", "DonorA"),
 #'   2006, 2000:2005, c("income", "sales")
 #' )
-#' blocks <- panel.blocks(prepared, cutoff = 2003)
+#' blocks <- tvsc.blocks(prepared, cutoff = 2003)
 #' blocks$X1[["2000"]]
 #' blocks$X0[["2000"]]
 #' blocks$Y0
 #'
 #' @note Initial base-R implementation.
-panel.blocks <- function(prepared, cutoff) {
+tvsc.blocks <- function(prepared, cutoff) {
   # Require the raw object contract before using schema fields for selection.
   fail <- function(message) stop(message, call. = FALSE)
   whole_numeric <- function(value) {
@@ -86,19 +86,19 @@ panel.blocks <- function(prepared, cutoff) {
   if (!inherits(prepared, "tvsc_prepared") || !is.list(prepared) ||
       !identical(prepared$schema_version, 1L) || !is.list(prepared$schema) ||
       !is.data.frame(prepared$training)) {
-    fail("prepared must be a schema-version-1 tvsc_prepared object from panel.dataprep().")
+    fail("prepared must be a schema-version-1 tvsc_prepared object from tvsc.dataprep().")
   }
   schema <- prepared$schema
   required <- c("unit", "time", "outcome", "predictors", "treated", "donors",
                 "intervention_time", "pre_period", "period_step")
   if (!all(required %in% names(schema)) || anyDuplicated(names(schema))) {
-    fail("prepared has an incomplete or ambiguous schema; recreate it with panel.dataprep().")
+    fail("prepared has an incomplete or ambiguous schema; recreate it with tvsc.dataprep().")
   }
   if (!is.list(prepared$recipe) ||
       !all(c("blocks", "scaling") %in% names(prepared$recipe)) ||
       !identical(prepared$recipe$blocks, "contemporaneous") ||
       !is.null(prepared$recipe$scaling)) {
-    fail("panel.blocks requires a contemporaneous raw recipe with scaling = NULL.")
+    fail("tvsc.blocks requires a contemporaneous raw recipe with scaling = NULL.")
   }
 
   # The cutoff is a declared date, never an implicitly chosen row or position.
@@ -128,10 +128,10 @@ panel.blocks <- function(prepared, cutoff) {
   if (!whole_numeric(times)) fail("prepared training time must be a finite integer-valued numeric index.")
 
   # Reuse the existing validator on the prefix only; do not pass future tables.
-  if (!exists("panel.dataprep", mode = "function")) {
-    fail("Load panel.dataprep() before calling panel.blocks().")
+  if (!exists("tvsc.dataprep", mode = "function")) {
+    fail("Load tvsc.dataprep() before calling tvsc.blocks().")
   }
-  prefix <- panel.dataprep(
+  prefix <- tvsc.dataprep(
     data = prepared$training[times %in% periods, , drop = FALSE],
     unit = schema$unit, time = schema$time, outcome = schema$outcome,
     treated = schema$treated, donors = schema$donors,
